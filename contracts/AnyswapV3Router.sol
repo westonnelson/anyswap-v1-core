@@ -403,6 +403,16 @@ contract AnyswapV3Router {
         AnyswapV1ERC20(token).withdrawVault(to, amount, to);
     }
 
+    // swaps `amount` `token` in `fromChainID` to `to` on this chainID with `to` receiving `underlying` if possible
+    function anySwapInAuto(bytes32 txs, address token, address to, uint amount, uint fromChainID) external onlyMPC {
+        _anySwapIn(txs, token, to, amount, fromChainID);
+        AnyswapV1ERC20 _anyToken = AnyswapV1ERC20(token);
+        address _underlying = _anyToken.underlying();
+        if (_underlying != address(0) && IERC20(_underlying).balanceOf(token) >= amount) {
+            _anyToken.withdrawVault(to, amount, to);
+        }
+    }
+
     // extracts mpc fee from bridge fees
     function anySwapFeeTo(address token, uint amount) external onlyMPC {
         address _mpc = mpc();
@@ -477,7 +487,16 @@ contract AnyswapV3Router {
         IERC20(_underlying).safeTransferFrom(from, path[0], amountIn);
         AnyswapV1ERC20(path[0]).depositVault(amountIn, from);
         AnyswapV1ERC20(path[0]).burn(from, amountIn);
-        emit LogAnySwapTradeTokensForTokens(path, from, to, amountIn, amountOutMin, cID(), toChainID);
+        {
+        address[] memory _path = path;
+        address _from = from;
+        address _to = to;
+        uint _amountIn = amountIn;
+        uint _amountOutMin = amountOutMin;
+        uint _cID = cID();
+        uint _toChainID = toChainID;
+        emit LogAnySwapTradeTokensForTokens(_path, _from, _to, _amountIn, _amountOutMin, _cID, _toChainID);
+        }
     }
 
     // sets up a cross-chain trade from this chain to `toChainID` for `path` trades to `to`
@@ -562,7 +581,16 @@ contract AnyswapV3Router {
         IERC20(_underlying).safeTransferFrom(from, path[0], amountIn);
         AnyswapV1ERC20(path[0]).depositVault(amountIn, from);
         AnyswapV1ERC20(path[0]).burn(from, amountIn);
-        emit LogAnySwapTradeTokensForNative(path, from, to, amountIn, amountOutMin, cID(), toChainID);
+        {
+        address[] memory _path = path;
+        address _from = from;
+        address _to = to;
+        uint _amountIn = amountIn;
+        uint _amountOutMin = amountOutMin;
+        uint _cID = cID();
+        uint _toChainID = toChainID;
+        emit LogAnySwapTradeTokensForNative(_path, _from, _to, _amountIn, _amountOutMin, _cID, _toChainID);
+        }
     }
 
     // sets up a cross-chain trade from this chain to `toChainID` for `path` trades to `to`
