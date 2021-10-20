@@ -91,6 +91,14 @@ contract AnyCallProxy is Whitelistable {
     event LogAnyExec(address indexed from, address[] to, bytes[] data, bool[] success, bytes[] result,
                      address[] callbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
 
+    uint private unlocked = 1;
+    modifier lock() {
+        require(unlocked == 1, 'AnyCall: LOCKED');
+        unlocked = 0;
+        _;
+        unlocked = 1;
+    }
+
     constructor(address _mpc) Whitelistable(_mpc) {
         uint256 id;
         assembly {id := chainid()}
@@ -123,7 +131,7 @@ contract AnyCallProxy is Whitelistable {
         address[] memory callbacks,
         uint256[] memory nonces,
         uint256 fromChainID
-    ) external onlyMPC {
+    ) external onlyMPC lock {
         uint256 length = to.length;
         bool[] memory success = new bool[](length);
         bytes[] memory results = new bytes[](length);
