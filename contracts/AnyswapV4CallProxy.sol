@@ -4,11 +4,11 @@ pragma solidity ^0.8.6;
 
 // MPC management means multi-party validation.
 // MPC signing likes Multi-Signature is more secure than use private key directly.
-contract MPCManageable {
+abstract contract MPCManageable {
     address public mpc;
     address public pendingMPC;
 
-    uint256 public constant delay = 2*24*3600;
+    uint256 public constant delay = 2 days;
     uint256 public delayMPC;
 
     modifier onlyMPC() {
@@ -50,36 +50,53 @@ contract MPCManageable {
 }
 
 // support limit operations to whitelist
-contract Whitelistable is MPCManageable {
-    bool public whitelistEnabled;
-    mapping(address => bool) public isInWhitelist;
+abstract contract Whitelistable is MPCManageable {
+    mapping(address => mapping(address => bool)) isInWhitelist;
+    mapping(address => address[]) whitelists;
 
-    event LogSetWhitelist(address indexed to, bool indexed flag);
+    event LogSetWhitelist(address indexed from, address indexed to, bool indexed flag);
 
-    modifier onlyWhitelist(address[] memory to) {
-        if (whitelistEnabled) {
-            for (uint256 i = 0; i < to.length; i++) {
-                require(isInWhitelist[to[i]], "AnyCall: to address is not in whitelist");
-            }
+    modifier onlyFromWhitelist(address from) {
+        require(isInWhitelist[address(this)][from], "AnyCall: caller is not in whitelist");
+        _;
+    }
+
+    modifier onlyToWhitelist(address from, address[] memory to) {
+        for (uint256 i = 0; i < to.length; i++) {
+            require(isInWhitelist[from][to[i]], "AnyCall: to address is not in whitelist");
         }
         _;
     }
 
     constructor(address _mpc) MPCManageable(_mpc) {
-        whitelistEnabled = true;
     }
 
-    function enableWhitelist() external onlyMPC {
-        whitelistEnabled = true;
+    function whitelistLength(address from) external view returns (uint256) {
+        return whitelists[from].length;
     }
 
-    function disableWhitelist() external onlyMPC {
-        whitelistEnabled = false;
+    function whitelist(address to, bool flag) external {
+        this.adminWhitelist(msg.sender, to, flag);
     }
 
-    function whitelist(address to, bool flag) external onlyMPC {
-        isInWhitelist[to] = flag;
-        emit LogSetWhitelist(to, flag);
+    function adminWhitelist(address from, address to, bool flag) external onlyMPC {
+        require(isInWhitelist[from][to] != flag, "nothing change");
+        address[] storage list = whitelists[from];
+        if (flag) {
+            list.push(to);
+        } else {
+            uint256 length = list.length;
+            for (uint i = 0; i < length; i++) {
+                if (list[i] == to) {
+                    if (i + 1 < length) {
+                        list[i] = list[length-1];
+                    }
+                    list.pop();
+                }
+            }
+        }
+        isInWhitelist[from][to] = flag;
+        emit LogSetWhitelist(from, to, flag);
     }
 }
 
@@ -100,9 +117,7 @@ contract AnyCallProxy is Whitelistable {
     }
 
     constructor(address _mpc) Whitelistable(_mpc) {
-        uint256 id;
-        assembly {id := chainid()}
-        cID = id;
+        cID = block.chainid;
     }
 
     /**
@@ -120,7 +135,7 @@ contract AnyCallProxy is Whitelistable {
         address[] memory callbacks,
         uint256[] memory nonces,
         uint256 toChainID
-    ) external onlyWhitelist(to) {
+    ) external onlyFromWhitelist(msg.sender) onlyToWhitelist(msg.sender, to) {
         emit LogAnyCall(msg.sender, to, data, callbacks, nonces, cID, toChainID);
     }
 
@@ -132,46 +147,18 @@ contract AnyCallProxy is Whitelistable {
         uint256[] memory nonces,
         uint256 fromChainID
     ) external onlyMPC lock {
+        require(from != address(this) && from != address(0), "AnyCall: FORBID");
         uint256 length = to.length;
         bool[] memory success = new bool[](length);
         bytes[] memory results = new bytes[](length);
         for (uint256 i = 0; i < length; i++) {
             address _to = to[i];
-            if (!whitelistEnabled || isInWhitelist[_to]) {
+            if (isInWhitelist[from][_to]) {
                 (success[i], results[i]) = _to.call{value:0}(data[i]);
             } else {
                 (success[i], results[i]) = (false, "forbid calling");
             }
         }
         emit LogAnyExec(from, to, data, success, results, callbacks, nonces, fromChainID, cID);
-    }
-
-    function encode(
-        string memory signature,
-        bytes memory data
-    ) external pure returns (bytes memory) {
-        return abi.encodePacked(bytes4(keccak256(bytes(signature))), data);
-    }
-
-    function encodePermit(
-        address owner,
-        address spender,
-        uint256 value,
-        uint256 deadline,
-        uint8 v, bytes32 r, bytes32 s
-    ) external pure returns (bytes memory) {
-        return abi.encodeWithSignature(
-            "permit(address,address,uint256,uint256,uint8,bytes32,bytes32)",
-            owner, spender, value, deadline, v, r, s);
-    }
-
-    function encodeTransferFrom(
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external pure returns (bytes memory) {
-        return abi.encodeWithSignature(
-            "transferFrom(address,address,uint256)",
-            sender, recipient, amount);
     }
 }
