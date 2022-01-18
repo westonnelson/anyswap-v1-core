@@ -272,7 +272,7 @@ contract AnyCallProxy is Billable {
         @param to - list of addresses to call
         @param data - list of data payloads to send / call
         @param fallbacks - the fallbacks on the fromChainID to call when target chain call fails
-        `fallback(address to, bytes data, uint256 nonces, uint256 fromChainID, bool success, bytes result)`
+        `anyCallFallback(uint256 nonce)`
         @param nonces - the nonces (ordering) to include for the resulting fallback
         @param toChainID - the recipient chain that will receive the events
     */
