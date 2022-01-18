@@ -110,44 +110,139 @@ abstract contract Whitelistable is MPCManageable {
     }
 }
 
-abstract contract Billable is Whitelistable {
-    event Fund(address indexed beneficiary, uint256 amount);
+interface IERC20 {
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+}
 
-    mapping(address => int256) public funds;
-    uint256 public expenses;
+interface IBillManager {
+    function billCaller(address caller) external;
+    function billTarget(address target, uint256 cost) external;
+}
 
-    modifier bill(address originator) {
-        uint256 gas = gasleft();
+contract MultichainBillManager {
+    event FundTarget(address indexed beneficiary, address indexed funder, uint256 amount);
+    event FundCaller(address indexed beneficiary, address indexed funder, address indexed token, uint256 amount);
+
+    mapping(address => bool) public payByOriginator; // key is caller, value is if call is paid by tx originator or not
+    mapping(address => address) public callerFeeTokens; // key is caller, value is erc20 token address
+    mapping(address => uint256) public feePerCall; // fee per call
+    mapping(address => int256) public callerFunds; // caller funds (erc20 token funded)
+    mapping(address => int256) public targetFunds; // target funds (native token funded)
+
+    mapping(address => uint256) public tokenExpenses; // erc20 token used by caller
+    uint256 public expenses; // native token used by target
+
+    address public admin;
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "must admin");
         _;
-        uint256 cost = (gas - gasleft()) * tx.gasprice;
-        funds[originator] -= int256(cost); // potential insufficient balances
+    }
+
+    constructor(address _admin) {
+        admin = _admin;
+    }
+
+    function setAdmin(address _admin) external onlyAdmin {
+        admin = _admin;
+    }
+
+    function billCaller(address caller) external {
+        if (payByOriginator[caller]) {
+            IERC20(callerFeeTokens[caller]).transferFrom(tx.origin, address(this), feePerCall[caller]);
+            tokenExpenses[callerFeeTokens[caller]] += feePerCall[caller];
+            return;
+        }
+        require(callerFunds[caller] > 0, "insufficient balance");
+        uint256 fee = feePerCall[caller];
+        callerFunds[caller] -= int256(fee);
+        tokenExpenses[callerFeeTokens[caller]] += fee;
+    }
+
+    function billTarget(address target, uint256 gasUsed) external {
+        uint256 cost = gasUsed * tx.gasprice;
+        require(targetFunds[target] > 0, "insufficient balance");
+        targetFunds[target] -= int256(cost); // potential insufficient balances
         expenses += cost;
     }
 
-    constructor(address _mpc) Whitelistable(_mpc) {}
-
-    function fund(address beneficiary) external payable {
-        funds[beneficiary] += int256(msg.value);
-        emit Fund(beneficiary, msg.value);
+    function setPayByOriginator(address caller, bool _payByOriginator) external onlyAdmin {
+        payByOriginator[caller] = _payByOriginator;
     }
 
-    function refundMPC() external {
+    function setCallerFee(address caller, address token, uint256 tokenPerCall) external onlyAdmin {
+        callerFeeTokens[caller] = token;
+        feePerCall[caller] = tokenPerCall;
+    }
+
+    function fundCaller(address caller, uint256 amount) external {
+        IERC20(callerFeeTokens[caller]).transferFrom(msg.sender, address(this), amount);
+        callerFunds[caller] += int256(amount);
+        emit FundCaller(caller, caller, callerFeeTokens[caller], amount);
+    }
+
+    function fundTarget(address funder) external payable {
+        targetFunds[funder] += int256(msg.value);
+        emit FundTarget(funder, funder, msg.value);
+    }
+
+    function refundNative(address receiver) external onlyAdmin {
         uint256 amount = expenses;
         if (address(this).balance >= amount) {
             expenses = 0;
-            mpc.call{value: amount}("");
+            receiver.call{value: amount}("");
         } else {
             expenses = amount - address(this).balance;
-            mpc.call{value: address(this).balance}("");
+            receiver.call{value: address(this).balance}("");
         }
+    }
+
+    function refundToken(address token, address receiver) external onlyAdmin {
+        uint256 amount = tokenExpenses[token];
+        if (IERC20(token).balanceOf(address(this)) >= amount) {
+            tokenExpenses[token] = 0;
+            IERC20(token).transfer(receiver, amount);
+        } else {
+            uint256 balance = IERC20(token).balanceOf(address(this));
+            tokenExpenses[token] = amount - balance;
+            IERC20(token).transfer(receiver, balance);
+        }
+    }
+}
+
+abstract contract Billable is Whitelistable {
+    address public billManager;
+
+    modifier billCaller(address caller) {
+        IBillManager(billManager).billCaller(caller);
+        _;
+    }
+
+    modifier billTarget(address[] memory targets) {
+        uint256 gas = gasleft();
+        _;
+        uint256 gasUsed = (gas - gasleft());
+        for (uint8 i = 0; i < targets.length; i++) {
+            IBillManager(billManager).billTarget(targets[i], gasUsed);
+        }
+    }
+
+    constructor(address _billManager) {
+        billManager = _billManager;
+    }
+
+    function changeBillManager(address newBillManager) external onlyMPC {
+        billManager = newBillManager;
     }
 }
 
 contract AnyCallProxy is Billable {
     event LogAnyCall(address indexed from, address[] to, bytes[] data,
-                     address[] callbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
+                     address[] fallbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
     event LogAnyExec(address indexed from, address[] to, bytes[] data, bool[] success, bytes[] result,
-                     address[] callbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
+                     address[] fallbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
 
     struct Context {
         address sender;
@@ -164,7 +259,7 @@ contract AnyCallProxy is Billable {
         unlocked = 1;
     }
 
-    constructor(address _mpc) Billable(_mpc) {}
+    constructor(address _mpc, address _billManager) Whitelistable(_mpc) Billable(_billManager) {}
 
     // @notice Query the chainID of this contract
     // @dev Implemented as a view function so it is less expensive. CHAINID < PUSH32
@@ -176,31 +271,31 @@ contract AnyCallProxy is Billable {
         @notice Trigger a cross-chain contract interaction
         @param to - list of addresses to call
         @param data - list of data payloads to send / call
-        @param callbacks - the callbacks on the fromChainID to call
-        `callback(address to, bytes data, uint256 nonces, uint256 fromChainID, bool success, bytes result)`
-        @param nonces - the nonces (ordering) to include for the resulting callback
+        @param fallbacks - the fallbacks on the fromChainID to call when target chain call fails
+        `fallback(address to, bytes data, uint256 nonces, uint256 fromChainID, bool success, bytes result)`
+        @param nonces - the nonces (ordering) to include for the resulting fallback
         @param toChainID - the recipient chain that will receive the events
     */
     function anyCall(
         address[] memory to,
         bytes[] memory data,
-        address[] memory callbacks,
+        address[] memory fallbacks,
         uint256[] memory nonces,
         uint256 toChainID
-    ) external onlyWhitelisted(msg.sender, toChainID, to) {
+    ) external onlyWhitelisted(msg.sender, toChainID, to) billCaller(msg.sender) {
         require(toChainID != block.chainid, "AnyCall: FORBID");
         require(!isBlacklisted[msg.sender]);
-        emit LogAnyCall(msg.sender, to, data, callbacks, nonces, block.chainid, toChainID);
+        emit LogAnyCall(msg.sender, to, data, fallbacks, nonces, block.chainid, toChainID);
     }
 
     function anyCall(
         address from,
         address[] memory to,
         bytes[] memory data,
-        address[] memory callbacks,
+        address[] memory fallbacks,
         uint256[] memory nonces,
         uint256 fromChainID
-    ) external onlyMPC lock bill(from) {
+    ) external billTarget(to) onlyMPC lock {
         require(from != address(this) && from != address(0), "AnyCall: FORBID");
         require(!isBlacklisted[from]);
 
@@ -219,6 +314,6 @@ contract AnyCallProxy is Billable {
             }
         }
         context = Context({sender: from, fromChainID: 0});
-        emit LogAnyExec(from, to, data, success, results, callbacks, nonces, fromChainID, block.chainid);
+        emit LogAnyExec(from, to, data, success, results, fallbacks, nonces, fromChainID, block.chainid);
     }
 }
