@@ -116,12 +116,48 @@ interface IERC20 {
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
 
+library Address {
+    function isContract(address account) internal view returns (bool) {
+        bytes32 codehash;
+        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+        // solhint-disable-next-line no-inline-assembly
+        assembly { codehash := extcodehash(account) }
+        return (codehash != 0x0 && codehash != accountHash);
+    }
+}
+
+library SafeERC20 {
+    using Address for address;
+
+    function safeTransfer(IERC20 token, address to, uint value) internal {
+        callOptionalReturn(token, abi.encodeWithSelector(token.transfer.selector, to, value));
+    }
+
+    function safeTransferFrom(IERC20 token, address from, address to, uint value) internal {
+        callOptionalReturn(token, abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
+    }
+
+    function callOptionalReturn(IERC20 token, bytes memory data) private {
+        require(address(token).isContract(), "SafeERC20: call to non-contract");
+
+        // solhint-disable-next-line avoid-low-level-calls
+        (bool success, bytes memory returndata) = address(token).call(data);
+        require(success, "SafeERC20: low-level call failed");
+
+        if (returndata.length > 0) { // Return data is optional
+            // solhint-disable-next-line max-line-length
+            require(abi.decode(returndata, (bool)), "SafeERC20: ERC20 operation did not succeed");
+        }
+    }
+}
+
 interface IBillManager {
     function billCaller(address caller) external;
     function billTarget(address target, uint256 cost) external;
 }
 
 contract MultichainBillManager {
+    using SafeERC20 for IERC20;
     event FundTarget(address indexed beneficiary, address indexed funder, uint256 amount);
     event FundCaller(address indexed beneficiary, address indexed funder, address indexed token, uint256 amount);
 
@@ -151,7 +187,7 @@ contract MultichainBillManager {
 
     function billCaller(address caller) external {
         if (payByOriginator[caller]) {
-            IERC20(callerFeeTokens[caller]).transferFrom(tx.origin, address(this), feePerCall[caller]);
+            IERC20(callerFeeTokens[caller]).safeTransferFrom(tx.origin, address(this), feePerCall[caller]);
             tokenExpenses[callerFeeTokens[caller]] += feePerCall[caller];
             return;
         }
@@ -178,7 +214,7 @@ contract MultichainBillManager {
     }
 
     function fundCaller(address caller, uint256 amount) external {
-        IERC20(callerFeeTokens[caller]).transferFrom(msg.sender, address(this), amount);
+        IERC20(callerFeeTokens[caller]).safeTransferFrom(msg.sender, address(this), amount);
         callerFunds[caller] += int256(amount);
         emit FundCaller(caller, caller, callerFeeTokens[caller], amount);
     }
@@ -203,11 +239,11 @@ contract MultichainBillManager {
         uint256 amount = tokenExpenses[token];
         if (IERC20(token).balanceOf(address(this)) >= amount) {
             tokenExpenses[token] = 0;
-            IERC20(token).transfer(receiver, amount);
+            IERC20(token).safeTransfer(receiver, amount);
         } else {
             uint256 balance = IERC20(token).balanceOf(address(this));
             tokenExpenses[token] = amount - balance;
-            IERC20(token).transfer(receiver, balance);
+            IERC20(token).safeTransfer(receiver, balance);
         }
     }
 }
