@@ -1,355 +1,231 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-
 pragma solidity ^0.8.6;
 
-// MPC management means multi-party validation.
-// MPC signing likes Multi-Signature is more secure than use private key directly.
-abstract contract MPCManageable {
-    address public mpc;
-    address public pendingMPC;
-
-    uint256 public constant delay = 2 days;
-    uint256 public delayMPC;
-
-    modifier onlyMPC() {
-        require(msg.sender == mpc, "MPC: only mpc");
-        _;
-    }
-
-    event LogChangeMPC(
-        address indexed oldMPC,
-        address indexed newMPC,
-        uint256 effectiveTime);
-
-    event LogApplyMPC(
-        address indexed oldMPC,
-        address indexed newMPC,
-        uint256 applyTime);
-
-    constructor(address _mpc) {
-        require(_mpc != address(0), "MPC: mpc is the zero address");
-        mpc = _mpc;
-        emit LogChangeMPC(address(0), mpc, block.timestamp);
-    }
-
-    function changeMPC(address _mpc) external onlyMPC {
-        require(_mpc != address(0), "MPC: mpc is the zero address");
-        pendingMPC = _mpc;
-        delayMPC = block.timestamp + delay;
-        emit LogChangeMPC(mpc, pendingMPC, delayMPC);
-    }
-
-    function applyMPC() external {
-        require(msg.sender == pendingMPC, "MPC: only pendingMPC");
-        require(block.timestamp >= delayMPC, "MPC: time before delayMPC");
-        emit LogApplyMPC(mpc, pendingMPC, block.timestamp);
-        mpc = pendingMPC;
-        pendingMPC = address(0);
-        delayMPC = 0;
-    }
-}
-
-// support limit operations to whitelist
-abstract contract Whitelistable is MPCManageable {
-    mapping(address => mapping(uint256 => mapping(address => bool))) public isInWhitelist;
-    mapping(address => mapping(uint256 => address[])) public whitelists;
-    mapping(address => bool) public isBlacklisted;
-
-    event LogSetWhitelist(address indexed from, uint256 indexed chainID, address indexed to, bool flag);
-
-    modifier onlyWhitelisted(address from, uint256 chainID, address[] memory to) {
-        mapping(address => bool) storage map = isInWhitelist[from][chainID];
-        for (uint256 i = 0; i < to.length; i++) {
-            require(map[to[i]], "AnyCall: to address is not in whitelist");
-        }
-        _;
-    }
-
-    constructor(address _mpc) MPCManageable(_mpc) {}
-
-    /**
-        @notice Query the number of elements in the whitelist of `whitelists[from][chainID]`
-        @param from The initiator of a cross chain interaction
-        @param chainID The target chain's identifier
-        @return uint256 The length of addresses `from` is allowed to call on `chainID`
-    */
-    function whitelistLength(address from, uint256 chainID) external view returns (uint256) {
-        return whitelists[from][chainID].length;
-    }
-
-    /**
-        @notice Approve/Revoke a caller's permissions to initiate a cross chain interaction
-        @param from The initiator of a cross chain interaction
-        @param chainID The target chain's identifier
-        @param to The address of the target `from` is being allowed/disallowed to call
-        @param flag Boolean denoting whether permissions is being granted/denied
-    */
-    function whitelist(address from, uint256 chainID, address to, bool flag) external onlyMPC {
-        require(isInWhitelist[from][chainID][to] != flag, "nothing change");
-        address[] storage list = whitelists[from][chainID];
-        if (flag) {
-            list.push(to);
-        } else {
-            uint256 length = list.length;
-            for (uint i = 0; i < length; i++) {
-                if (list[i] == to) {
-                    if (i + 1 < length) {
-                        list[i] = list[length-1];
-                    }
-                    list.pop();
-                    break;
-                }
-            }
-        }
-        isInWhitelist[from][chainID][to] = flag;
-        emit LogSetWhitelist(from, chainID, to, flag);
-    }
-
-    function blacklist(address account, bool flag) external onlyMPC {
-        isBlacklisted[account] = flag;
-    }
-}
-
-interface IERC20 {
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-}
-
-library Address {
-    function isContract(address account) internal view returns (bool) {
-        bytes32 codehash;
-        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
-        // solhint-disable-next-line no-inline-assembly
-        assembly { codehash := extcodehash(account) }
-        return (codehash != 0x0 && codehash != accountHash);
-    }
-}
-
-library SafeERC20 {
-    using Address for address;
-
-    function safeTransfer(IERC20 token, address to, uint value) internal {
-        callOptionalReturn(token, abi.encodeWithSelector(token.transfer.selector, to, value));
-    }
-
-    function safeTransferFrom(IERC20 token, address from, address to, uint value) internal {
-        callOptionalReturn(token, abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
-    }
-
-    function callOptionalReturn(IERC20 token, bytes memory data) private {
-        require(address(token).isContract(), "SafeERC20: call to non-contract");
-
-        // solhint-disable-next-line avoid-low-level-calls
-        (bool success, bytes memory returndata) = address(token).call(data);
-        require(success, "SafeERC20: low-level call failed");
-
-        if (returndata.length > 0) { // Return data is optional
-            // solhint-disable-next-line max-line-length
-            require(abi.decode(returndata, (bool)), "SafeERC20: ERC20 operation did not succeed");
-        }
-    }
-}
-
-interface IBillManager {
-    function billCaller(address caller) external;
-    function billTarget(address target, uint256 cost) external;
-}
-
-contract MultichainBillManager {
-    using SafeERC20 for IERC20;
-    event FundTarget(address indexed beneficiary, address indexed funder, uint256 amount);
-    event FundCaller(address indexed beneficiary, address indexed funder, address indexed token, uint256 amount);
-
-    mapping(address => bool) public payByOriginator; // key is caller, value is if call is paid by tx originator or not
-    mapping(address => address) public callerFeeTokens; // key is caller, value is erc20 token address
-    mapping(address => uint256) public feePerCall; // fee per call
-    mapping(address => int256) public callerFunds; // caller funds (erc20 token funded)
-    mapping(address => int256) public targetFunds; // target funds (native token funded)
-
-    mapping(address => uint256) public tokenExpenses; // erc20 token used by caller
-    uint256 public expenses; // native token used by target
-
-    address public admin;
-
-    modifier onlyAdmin() {
-        require(msg.sender == admin, "must admin");
-        _;
-    }
-
-    constructor(address _admin) {
-        admin = _admin;
-    }
-
-    function setAdmin(address _admin) external onlyAdmin {
-        admin = _admin;
-    }
-
-    function billCaller(address caller) external {
-        if (payByOriginator[caller]) {
-            IERC20(callerFeeTokens[caller]).safeTransferFrom(tx.origin, address(this), feePerCall[caller]);
-            tokenExpenses[callerFeeTokens[caller]] += feePerCall[caller];
-            return;
-        }
-        require(callerFunds[caller] > 0, "insufficient balance");
-        uint256 fee = feePerCall[caller];
-        callerFunds[caller] -= int256(fee);
-        tokenExpenses[callerFeeTokens[caller]] += fee;
-    }
-
-    function billTarget(address target, uint256 gasUsed) external {
-        uint256 cost = gasUsed * tx.gasprice;
-        require(targetFunds[target] > 0, "insufficient balance");
-        targetFunds[target] -= int256(cost); // potential insufficient balances
-        expenses += cost;
-    }
-
-    function setPayByOriginator(address caller, bool _payByOriginator) external onlyAdmin {
-        payByOriginator[caller] = _payByOriginator;
-    }
-
-    function setCallerFee(address caller, address token, uint256 tokenPerCall) external onlyAdmin {
-        callerFeeTokens[caller] = token;
-        feePerCall[caller] = tokenPerCall;
-    }
-
-    function fundCaller(address caller, uint256 amount) external {
-        IERC20(callerFeeTokens[caller]).safeTransferFrom(msg.sender, address(this), amount);
-        callerFunds[caller] += int256(amount);
-        emit FundCaller(caller, caller, callerFeeTokens[caller], amount);
-    }
-
-    function fundTarget(address funder) external payable {
-        targetFunds[funder] += int256(msg.value);
-        emit FundTarget(funder, funder, msg.value);
-    }
-
-    function refundNative(address receiver) external onlyAdmin {
-        uint256 amount = expenses;
-        if (address(this).balance >= amount) {
-            expenses = 0;
-            receiver.call{value: amount}("");
-        } else {
-            expenses = amount - address(this).balance;
-            receiver.call{value: address(this).balance}("");
-        }
-    }
-
-    function refundToken(address token, address receiver) external onlyAdmin {
-        uint256 amount = tokenExpenses[token];
-        if (IERC20(token).balanceOf(address(this)) >= amount) {
-            tokenExpenses[token] = 0;
-            IERC20(token).safeTransfer(receiver, amount);
-        } else {
-            uint256 balance = IERC20(token).balanceOf(address(this));
-            tokenExpenses[token] = amount - balance;
-            IERC20(token).safeTransfer(receiver, balance);
-        }
-    }
-}
-
-abstract contract Billable is Whitelistable {
-    address public billManager;
-
-    modifier billCaller(address caller) {
-        IBillManager(billManager).billCaller(caller);
-        _;
-    }
-
-    modifier billTarget(address[] memory targets) {
-        uint256 gas = gasleft();
-        _;
-        uint256 gasUsed = (gas - gasleft());
-        for (uint8 i = 0; i < targets.length; i++) {
-            IBillManager(billManager).billTarget(targets[i], gasUsed);
-        }
-    }
-
-    constructor(address _billManager) {
-        billManager = _billManager;
-    }
-
-    function changeBillManager(address newBillManager) external onlyMPC {
-        billManager = newBillManager;
-    }
-}
-
-contract AnyCallProxy is Billable {
-    event LogAnyCall(address indexed from, address[] to, bytes[] data,
-                     address[] fallbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
-    event LogAnyExec(address indexed from, address[] to, bytes[] data, bool[] success, bytes[] result,
-                     address[] fallbacks, uint256[] nonces, uint256 fromChainID, uint256 toChainID);
-
+contract AnyCallProxy {
+    // Context information for destination chain targets
     struct Context {
         address sender;
         uint256 fromChainID;
     }
 
-    Context public context;
-
-    uint private unlocked = 1;
-    modifier lock() {
-        require(unlocked == 1, 'AnyCall: LOCKED');
-        unlocked = 0;
-        _;
-        unlocked = 1;
+    // Packed fee information (only 1 storage slot)
+    struct FeeData {
+        uint128 accruedFees;
+        uint128 premium;
     }
 
-    constructor(address _mpc, address _billManager) Whitelistable(_mpc) Billable(_billManager) {}
+    // Packed MPC transfer info (only 1 storage slot)
+    struct TransferData {
+        uint96 effectiveTime;
+        address pendingMPC;
+    }
 
-    // @notice Query the chainID of this contract
-    // @dev Implemented as a view function so it is less expensive. CHAINID < PUSH32
-    function cID() external view returns (uint256) {
-        return block.chainid;
+    // Extra cost of execution (SSTOREs.SLOADs,ADDs,etc..)
+    uint256 constant EXECUTION_OVERHEAD = 100000;
+    // Delay for ownership transfer
+    uint256 constant TRANSFER_DELAY = 2 days;
+
+    // reentrancy lock starts at 1 so it costs less overtime
+    uint256 private _locked = 1;
+
+    address public mpc;
+    TransferData private _transferData;
+
+    mapping(address => bool) public blacklist;
+    mapping(address => mapping(address => mapping(uint256 => bool))) public whitelist;
+    
+    Context public context;
+
+    mapping(address => uint256) public executionBudget;
+    FeeData private _feeData;
+
+    event AnyCall(
+        address indexed from,
+        address indexed to,
+        bytes data,
+        address callback,
+        uint256 indexed toChainID
+    );
+
+    event AnyExec(
+        address indexed from,
+        address indexed to,
+        bytes data,
+        bool success,
+        bytes result,
+        address callback,
+        uint256 indexed fromChainID
+    );
+
+    event AnyCallback(
+        address indexed from,
+        address indexed to,
+        bytes data,
+        bool success,
+        bytes result,
+        uint256 indexed toChainID,
+        bool callbackSuccess,
+        bytes callbackResult
+    );
+
+    event Deposit(address indexed account, uint256 amount);
+    event Withdrawl(address indexed account, uint256 amount);
+    event SetBlacklist(address indexed account, bool flag);
+    event SetWhitelist(
+        address indexed from,
+        address indexed to,
+        uint256 indexed toChainID,
+        bool flag
+    );
+    event TransferMPC(address oldMPC, address newMPC, uint256 effectiveTime);
+    event UpdatePremium(uint256 oldPremium, uint256 newPremium);
+
+    constructor(address _mpc, uint128 _premium) {
+        mpc = _mpc;
+        _feeData.premium = _premium;
+
+        emit TransferMPC(address(0), _mpc, block.timestamp);
+        emit UpdatePremium(0, _premium);
+    }
+
+    /// @dev Reentrancy Guard taken from solmate https://github.com/Rari-Capital/solmate
+    modifier nonreentrant() {
+       require(_locked == 1); // dev: reentrancy
+       _locked = 2;
+       _;
+       _locked = 1;
+    }
+
+    modifier onlyMPC() {
+        require(msg.sender == mpc); // dev: only MPC
+        _;
+    }
+
+    modifier charge(address _from) {
+        uint256 gasUsed = gasleft() + EXECUTION_OVERHEAD;
+        _;
+        uint256 totalCost = (gasUsed - gasleft()) * (tx.gasprice + _feeData.premium);
+
+        executionBudget[_from] -= totalCost;
+        _feeData.accruedFees += totalCost;
     }
 
     /**
-        @notice Trigger a cross-chain contract interaction
-        @param to - list of addresses to call
-        @param data - list of data payloads to send / call
-        @param fallbacks - the fallbacks on the fromChainID to call when target chain call fails
-        `anyCallFallback(uint256 nonce)`
-        @param nonces - the nonces (ordering) to include for the resulting fallback
-        @param toChainID - the recipient chain that will receive the events
+        @notice Submit a request for a cross chain interaction
+        @param _to The target to interact with on `_toChainID`
+        @param _data The calldata supplied for the interaction with `_to`
+        @param _callback The address to call back on the originating chain
+            with execution information about the cross chain interaction
+        @param _toChainID The target chain id to interact with
     */
     function anyCall(
-        address[] memory to,
-        bytes[] memory data,
-        address[] memory fallbacks,
-        uint256[] memory nonces,
-        uint256 toChainID
-    ) external onlyWhitelisted(msg.sender, toChainID, to) billCaller(msg.sender) {
-        require(toChainID != block.chainid, "AnyCall: FORBID");
-        require(!isBlacklisted[msg.sender]);
-        emit LogAnyCall(msg.sender, to, data, fallbacks, nonces, block.chainid, toChainID);
+        address _to,
+        bytes calldata _data,
+        address _callback,
+        uint256 _toChainID
+    ) external nonreentrant {
+        require(!blacklist[msg.sender]); // dev: caller is blacklisted
+        require(whitelist[msg.sender][_to][_toChainID]); // dev: request denied
+
+        emit AnyCall(msg.sender, _to, _data, _callback, _toChainID);
     }
 
-    function anyCall(
-        address from,
-        address[] memory to,
-        bytes[] memory data,
-        address[] memory fallbacks,
-        uint256[] memory nonces,
-        uint256 fromChainID
-    ) external billTarget(to) onlyMPC lock {
-        require(from != address(this) && from != address(0), "AnyCall: FORBID");
-        require(!isBlacklisted[from]);
+    function anyExec(
+        address _from,
+        address _to,
+        bytes calldata _data,
+        address _callback,
+        uint256 _fromChainID
+    ) external charge(_from) nonreentrant onlyMPC {
+        context = Context({sender: _from, fromChainID: _fromChainID});
+        (bool success, bytes memory result) = _to.call(_data);
+        context = Context({sender: address(0), fromChainID: 0});
 
-        uint256 length = to.length;
-        bool[] memory success = new bool[](length);
-        bytes[] memory results = new bytes[](length);
+        emit AnyExec(_from, _to, _data, success, result, _callback, _fromChainID);
+    }
 
-        context = Context({sender: from, fromChainID: fromChainID});
+    function anyCallback(
+        address _from,
+        address _to,
+        bytes calldata _data,
+        bool _success,
+        bytes calldata _result,
+        address _callback,
+        uint256 _toChainID
+    ) external charge(_from) nonreentrant onlyMPC {
+        (bool success, bytes memory result) = _callback.call(
+            abi.encodeWithSignature(
+                "callback(address,address,bytes,bool,bytes,uint256)",
+                _from,
+                _to,
+                _data,
+                _success,
+                _result,
+                _toChainID
+            )
+        );
 
-        for (uint256 i = 0; i < length; i++) {
-            address _to = to[i];
-            if (isInWhitelist[from][block.chainid][_to]) {
-                (success[i], results[i]) = _to.call{value:0}(data[i]);
-            } else {
-                (success[i], results[i]) = (false, "forbid calling");
-            }
-        }
-        context = Context({sender: from, fromChainID: 0});
-        emit LogAnyExec(from, to, data, success, results, fallbacks, nonces, fromChainID, block.chainid);
+        emit AnyCallback(_from, _to, _data, _success, _result, _toChainID, success, result);
+    }
+
+    function deposit(address _account) external payable {
+        executionBudget[_account] += msg.value;
+        emit Deposit(_account, msg.value);
+    }
+
+    function withdraw(uint256 _amount) external {
+        executionBudget[msg.sender] -= _amount;
+        emit Withdrawl(msg.sender, _amount);
+        (bool s, bytes memory r) = msg.sender.call{value: _amount}("");
+    }
+
+    function withdrawAccruedFees() external {
+        uint256 fees = _feeData.accruedFees;
+        _feeData.accruedFees = 0;
+        (bool s, bytes memory r) = mpc.call{value: fees}("");
+    }
+
+    function setWhitelist(
+        address _from,
+        address _to,
+        uint256 _toChainID,
+        bool _flag
+    ) external onlyMPC {
+        whitelist[_from][_to][_toChainID] = _flag;
+        emit SetWhitelist(_from, _to, _toChainID, _flag);
+    }
+
+    function setBlacklist(address _account, bool _flag) external onlyMPC {
+        blacklist[_account] = _flag;
+        emit SetBlacklist(_account, _flag);
+    }
+
+    function setPremium(uint128 _premium) external onlyMPC {
+        emit UpdatePremium(_feeData.premium, _premium);
+        _feeData.premium = _premium;
+    }
+
+    function changeMPC(address _newMPC) external onlyMPC {
+        _transferData = TransferData({
+            effectiveTime: uint96(block.timestamp + TRANSFER_DELAY),
+            pendingMPC: _newMPC
+        });
+        emit TransferMPC(mpc, _newMPC, block.timestamp + TRANSFER_DELAY);
+    }
+
+    function accruedFees() external view returns(uint128) {
+        return _feeData.accruedFees;
+    }
+
+    function premium() external view returns(uint128) {
+        return _feeData.premium;
+    }
+
+    function effectiveTime() external view returns(uint256) {
+        return _transferData.effectiveTime;
+    }
+    
+    function pendingMPC() external view returns(address) {
+        return _transferData.pendingMPC;
     }
 }
