@@ -25,9 +25,6 @@ contract AnyCallProxy {
     // Delay for ownership transfer
     uint256 constant TRANSFER_DELAY = 2 days;
 
-    // reentrancy lock starts at 1 so it costs less overtime
-    uint256 private _locked = 1;
-
     address public mpc;
     TransferData private _transferData;
 
@@ -88,14 +85,6 @@ contract AnyCallProxy {
         emit UpdatePremium(0, _premium);
     }
 
-    /// @dev Reentrancy Guard taken from solmate https://github.com/Rari-Capital/solmate
-    modifier nonreentrant() {
-       require(_locked == 1); // dev: reentrancy
-       _locked = 2;
-       _;
-       _locked = 1;
-    }
-
     modifier onlyMPC() {
         require(msg.sender == mpc); // dev: only MPC
         _;
@@ -107,7 +96,7 @@ contract AnyCallProxy {
         uint256 totalCost = (gasUsed - gasleft()) * (tx.gasprice + _feeData.premium);
 
         executionBudget[_from] -= totalCost;
-        _feeData.accruedFees += totalCost;
+        _feeData.accruedFees += uint128(totalCost);
     }
 
     /**
@@ -123,7 +112,7 @@ contract AnyCallProxy {
         bytes calldata _data,
         address _callback,
         uint256 _toChainID
-    ) external nonreentrant {
+    ) external {
         require(!blacklist[msg.sender]); // dev: caller is blacklisted
         require(whitelist[msg.sender][_to][_toChainID]); // dev: request denied
 
@@ -136,36 +125,12 @@ contract AnyCallProxy {
         bytes calldata _data,
         address _callback,
         uint256 _fromChainID
-    ) external charge(_from) nonreentrant onlyMPC {
+    ) external charge(_from) onlyMPC {
         context = Context({sender: _from, fromChainID: _fromChainID});
         (bool success, bytes memory result) = _to.call(_data);
         context = Context({sender: address(0), fromChainID: 0});
 
         emit AnyExec(_from, _to, _data, success, result, _callback, _fromChainID);
-    }
-
-    function anyCallback(
-        address _from,
-        address _to,
-        bytes calldata _data,
-        bool _success,
-        bytes calldata _result,
-        address _callback,
-        uint256 _toChainID
-    ) external charge(_from) nonreentrant onlyMPC {
-        (bool success, bytes memory result) = _callback.call(
-            abi.encodeWithSignature(
-                "callback(address,address,bytes,bool,bytes,uint256)",
-                _from,
-                _to,
-                _data,
-                _success,
-                _result,
-                _toChainID
-            )
-        );
-
-        emit AnyCallback(_from, _to, _data, _success, _result, _toChainID, success, result);
     }
 
     function deposit(address _account) external payable {
@@ -176,13 +141,13 @@ contract AnyCallProxy {
     function withdraw(uint256 _amount) external {
         executionBudget[msg.sender] -= _amount;
         emit Withdrawl(msg.sender, _amount);
-        (bool s, bytes memory r) = msg.sender.call{value: _amount}("");
+        msg.sender.call{value: _amount}("");
     }
 
     function withdrawAccruedFees() external {
         uint256 fees = _feeData.accruedFees;
         _feeData.accruedFees = 0;
-        (bool s, bytes memory r) = mpc.call{value: fees}("");
+        mpc.call{value: fees}("");
     }
 
     function setWhitelist(
