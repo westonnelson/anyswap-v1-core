@@ -41,7 +41,7 @@ contract AnyCallProxy {
         address indexed from,
         address indexed to,
         bytes data,
-        address callback,
+        address fallback,
         uint256 indexed toChainID
     );
 
@@ -51,7 +51,7 @@ contract AnyCallProxy {
         bytes data,
         bool success,
         bytes result,
-        address callback,
+        address fallback,
         uint256 indexed fromChainID
     );
 
@@ -96,20 +96,20 @@ contract AnyCallProxy {
         @notice Submit a request for a cross chain interaction
         @param _to The target to interact with on `_toChainID`
         @param _data The calldata supplied for the interaction with `_to`
-        @param _callback The address to call back on the originating chain
-            with execution information about the cross chain interaction
+        @param _fallback The address to call back on the originating chain
+            if the cross chain interaction fails
         @param _toChainID The target chain id to interact with
     */
     function anyCall(
         address _to,
         bytes calldata _data,
-        address _callback,
+        address _fallback,
         uint256 _toChainID
     ) external {
         require(!blacklist[msg.sender]); // dev: caller is blacklisted
         require(whitelist[msg.sender][_to][_toChainID]); // dev: request denied
 
-        emit AnyCall(msg.sender, _to, _data, _callback, _toChainID);
+        emit AnyCall(msg.sender, _to, _data, _fallback, _toChainID);
     }
 
     /**
@@ -118,14 +118,14 @@ contract AnyCallProxy {
         @param _from The request originator
         @param _to The cross chain interaction target
         @param _data The calldata supplied for interacting with target
-        @param _callback The address to call on `_fromChainID` with execution info
+        @param _fallback The address to call on `_fromChainID` if the interaction fails
         @param _fromChainID The originating chain id
     */
     function anyExec(
         address _from,
         address _to,
         bytes calldata _data,
-        address _callback,
+        address _fallback,
         uint256 _fromChainID
     ) external charge(_from) onlyMPC {
         context = Context({sender: _from, fromChainID: _fromChainID});
@@ -133,6 +133,18 @@ contract AnyCallProxy {
         context = Context({sender: address(0), fromChainID: 0});
 
         emit AnyExec(_from, _to, _data, success, result, _callback, _fromChainID);
+
+        // Call the fallback on the originating chain with the call information (to, data)
+        // _from, _fromChainID, _toChainID can all be identified via contextual info
+        if (!success && _fallback != address(0)) {
+            emit AnyCall(
+                _from,
+                _fallback,
+                abi.encodeWithSignature("anyFallback(address,bytes)", _to, _data),
+                address(0),
+                _fromChainID
+            );
+        }
     }
 
     /// @notice Deposit native currency crediting `_account` for execution costs on this chain
