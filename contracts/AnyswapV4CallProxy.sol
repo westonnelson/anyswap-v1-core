@@ -41,7 +41,7 @@ contract AnyCallProxy {
         address indexed from,
         address indexed to,
         bytes data,
-        address fallback,
+        address _fallback,
         uint256 indexed toChainID
     );
 
@@ -51,7 +51,7 @@ contract AnyCallProxy {
         bytes data,
         bool success,
         bytes result,
-        address fallback,
+        address _fallback,
         uint256 indexed fromChainID
     );
 
@@ -132,7 +132,7 @@ contract AnyCallProxy {
         (bool success, bytes memory result) = _to.call(_data);
         context = Context({sender: address(0), fromChainID: 0});
 
-        emit AnyExec(_from, _to, _data, success, result, _callback, _fromChainID);
+        emit AnyExec(_from, _to, _data, success, result, _fallback, _fromChainID);
 
         // Call the fallback on the originating chain with the call information (to, data)
         // _from, _fromChainID, _toChainID can all be identified via contextual info
