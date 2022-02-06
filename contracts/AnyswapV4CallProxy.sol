@@ -159,7 +159,8 @@ contract AnyCallProxy {
     function withdraw(uint256 _amount) external {
         executionBudget[msg.sender] -= _amount;
         emit Withdrawl(msg.sender, _amount);
-        msg.sender.call{value: _amount}("");
+        (bool success,) = msg.sender.call{value: _amount}("");
+        require(success);
     }
 
     /// @notice Withdraw all accrued execution fees
@@ -167,7 +168,8 @@ contract AnyCallProxy {
     function withdrawAccruedFees() external {
         uint256 fees = _feeData.accruedFees;
         _feeData.accruedFees = 0;
-        mpc.call{value: fees}("");
+        (bool success,) = mpc.call{value: fees}("");
+        require(success);
     }
 
     /// @notice Set the whitelist premitting an account to issue a cross chain request
@@ -180,6 +182,7 @@ contract AnyCallProxy {
         uint256 _toChainID,
         bool _flag
     ) external onlyMPC {
+        require(_toChainID != block.chainid, "AnyCall: Forbidden");
         whitelist[_from][_to][_toChainID] = _flag;
         emit SetWhitelist(_from, _to, _toChainID, _flag);
     }
@@ -218,6 +221,7 @@ contract AnyCallProxy {
         require(block.timestamp >= _transferData.effectiveTime); // dev: too early
 
         mpc = msg.sender;
+        _transferData = TransferData({effectiveTime: 0, pendingMPC: address(0)});
     }
 
     /// @notice Get the total accrued fees in native currency
