@@ -37,7 +37,7 @@ contract AnyCallProxy {
     mapping(address => uint256) public executionBudget;
     FeeData private _feeData;
 
-    event AnyCall(
+    event LogAnyCall(
         address indexed from,
         address indexed to,
         bytes data,
@@ -45,7 +45,7 @@ contract AnyCallProxy {
         uint256 indexed toChainID
     );
 
-    event AnyExec(
+    event LogAnyExec(
         address indexed from,
         address indexed to,
         bytes data,
