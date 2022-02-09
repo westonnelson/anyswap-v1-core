@@ -4,11 +4,14 @@
 pragma solidity ^0.8.0;
 
 import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Context.sol";
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
 
 /**
  * @dev Add on-chain data attach to ERC721 token
  */
 contract ERC721WithData is ERC721Enumerable {
+    address public nftDataAdmin;
     address public dataOperator;
     struct TokenData {
         uint256 foo;
@@ -17,8 +20,22 @@ contract ERC721WithData is ERC721Enumerable {
 
     mapping(uint256 => TokenData) public data;
 
+    modifier onlyNftDataAdmin() {
+        require(_msgSender() == nftDataAdmin);
+        _;
+    }
+
     constructor(string memory name_, string memory symbol_, address dataOperator_) ERC721(name_, symbol_) {
+        nftDataAdmin = _msgSender();
         dataOperator = dataOperator_;
+    }
+
+    function setDataOperator(address _operator) public onlyNftDataAdmin {
+        dataOperator = _operator;
+    }
+
+    function setNftDataAdmin(address _admin) public onlyNftDataAdmin {
+        nftDataAdmin = _admin;
     }
 
     function setTokenData(uint256 tokenId, uint256 _foo, uint256 _bar) internal {
@@ -41,6 +58,17 @@ contract ERC721WithData is ERC721Enumerable {
     }
 }
 
+abstract contract ERC721Receiver {
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
+    }
+}
+
 abstract contract AnyCallProxy {
     struct Context {
         address sender;
@@ -53,92 +81,69 @@ abstract contract AnyCallProxy {
     function withdraw(uint256 _amount) virtual external;
 }
 
-contract Multichain721 is ERC721WithData {
-    address public admin;
+abstract contract AnyCallClient is Context {
+    address public anyCallClientAdmin;
     address public anyCallProxy;
-
-    uint256 public constant PrepareTimeout = 7 days;
-
-    /// Outbound prepare struct
-    /// caller is the original owner
-    struct Prepare {
-        address caller;
-        uint96 timestamp;
-    }
-
-    /// key is tokenId
-    mapping (uint256 => Prepare) public prepares;
 
     /// key is destination chain id
     /// value is Multichain721 contract on destination chain
     mapping (uint256 => address) public targets;
-    mapping (address => uint256) public chains;
 
-    event LogPrepare(uint256 tokenId, Prepare lock);
-    event LogCancelPrepare(uint256 tokenId, Prepare lock);
-    event LogOutboundSuccess(uint256 tokenId);
-    event LogOutboundFail(uint256 tokenId);
+    /// key is target contract address
+    /// value is chainIDs
+    mapping (address => uint256) public chains;
 
     modifier onlyAnyCall() {
         require(_msgSender() == anyCallProxy, "not authorized");
         _;
     }
 
-    modifier onlyAdmin() {
-        require(_msgSender() == admin, "not authorized");
+    modifier onlyAnyCallClientAdmin() {
+        require(_msgSender() == anyCallClientAdmin, "not authorized");
         _;
     }
 
-    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721WithData(name_, symbol_, anyCallProxy_) {
-        admin = _msgSender();
+    constructor(address anyCallProxy_) {
+        anyCallClientAdmin = _msgSender();
         anyCallProxy = anyCallProxy_;
     }
 
-    function isLocked(uint256 tokenId) view public returns (bool) {
-        return (ownerOf(tokenId) == address(this));
+    function setAnyCallProxy(address anyCallProxy_) public onlyAnyCallClientAdmin {
+        anyCallProxy = anyCallProxy_;
     }
+
+    function setAdmin(address admin_) public onlyAnyCallClientAdmin {
+        anyCallClientAdmin = admin_;
+    }
+
+    function setTarget(address target, uint256 chainId) public onlyAnyCallClientAdmin {
+        targets[chainId] = target;
+        chains[target] = chainId;
+    }
+
+    function anyCallWithdraw(uint256 amount) public onlyAnyCallClientAdmin {
+        AnyCallProxy(anyCallProxy).withdraw(amount);
+        anyCallClientAdmin.call{value: amount}("");
+    }
+}
+
+/**
+ * Multichain721
+ * Multichain NFT contract utilizing AnyCall
+ */
+contract Multichain721 is ERC721WithData, ERC721Receiver, AnyCallClient {              
+    event LogOutbound(uint256 tokenId);
+    event LogOutboundFail(uint256 tokenId);
+
+    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721WithData(name_, symbol_, anyCallProxy_) AnyCallClient(anyCallProxy_) {}
 
     function claim(uint256 tokenId) public {
         _safeMint(_msgSender(), tokenId);
     }
 
-    function setAnyCallProxy(address anyCallProxy_) public onlyAdmin {
-        anyCallProxy = anyCallProxy_;
-        dataOperator = anyCallProxy_;
-    }
-
-    function setAdmin(address admin_) public onlyAdmin {
-        admin = admin_;
-    }
-
-    function setTarget(address target, uint256 chainId) public onlyAdmin {
-        targets[chainId] = target;
-        chains[target] = chainId;
-    }
-
-    function prepare(uint256 tokenId) internal {
-        _safeTransfer(_msgSender(), address(this), tokenId, "");
-        Prepare memory lock = Prepare(_msgSender(), uint96(block.timestamp));
-        prepares[tokenId] = lock;
-        emit LogPrepare(tokenId, lock);
-    }
-
-    function cancelPrepare(uint256 tokenId) internal {
-        address caller = prepares[tokenId].caller;
-        uint96 timestamp = prepares[tokenId].timestamp;
-        require(caller != address(0) && timestamp > 0);
-        require(block.timestamp >= uint256(timestamp) + PrepareTimeout, "cannot cancel before timeout");
-        _safeTransfer(address(this), prepares[tokenId].caller, tokenId, "");
-        Prepare memory lock = prepares[tokenId];
-        prepares[tokenId] = Prepare(address(0), uint96(0));
-        emit LogCancelPrepare(tokenId, lock);
-    }
-
-    /// add tokenId to prepare (temporarily locked)
-    /// call anyCall
     function outbound(uint256 tokenId, address receiver, uint256 toChainID) public {
-        prepare(tokenId);
         bytes memory inboundData = abi.encodeWithSignature("inbound(uint256,address,bytes)", tokenId, receiver, encodeTokenData(tokenId));
+        _burn(tokenId);
         // anycall inbound
         AnyCallProxy(anyCallProxy).anyCall(targets[toChainID], inboundData, address(this), toChainID);
     }
@@ -154,40 +159,172 @@ contract Multichain721 is ERC721WithData {
         } else {
             revert("tokenId is not available on destination chain");
         }
-        // anycall outboundCallback
-        (, uint256 fromChainID) = AnyCallProxy(anyCallProxy).context();
-        bytes memory callbackData = abi.encodeWithSignature("outboundCallback(uint256)", tokenId);
-        AnyCallProxy(anyCallProxy).anyCall(targets[fromChainID], callbackData, address(0), fromChainID);
-    }
-
-    /// remove prepare, lock tokenId in this contract
-    /// burn tokenId (optional)
-    function outboundCallback(uint256 tokenId) public onlyAnyCall {
-        prepares[tokenId] = Prepare(address(0), uint96(0));
-        _burn(tokenId);
-        emit LogOutboundSuccess(tokenId);
     }
 
     function anyFallback(address to, bytes calldata data) public onlyAnyCall {
         require(chains[to] > 0, "unknown target contract");
         // decode data
-        (uint256 tokenId, ,) = abi.decode(data[4:], (uint256, address, bytes));
-        cancelPrepare(tokenId);
+        (uint256 tokenId, address receiver,) = abi.decode(data[4:], (uint256, address, bytes));
+        _safeTransfer(address(this), receiver, tokenId, "");
         emit LogOutboundFail(tokenId);
         return;
     }
+ }
 
-    function withdraw(uint256 amount) public onlyAdmin {
-        AnyCallProxy(anyCallProxy).withdraw(amount);admin.call{value: amount}("");
-        admin.call{value: amount}("");
+ /**
+ * Multichain721_Untrusted
+ * Hashlock based multichain NFT contract
+ */
+contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallClient {
+    using Address for address;
+
+    uint256 public constant RelayTimeout = 5 days;
+    uint256 public constant ReceiveTimeout = 6 days;
+    uint256 public constant CancelTimeout = 11 days;
+    uint120 nonce;
+
+    /// Outbound lock struct
+    /// owner is the original owner
+    struct Message {
+        uint64 fromChainID;
+        uint64 toChainID;
+        address owner;
+        uint96 timestamp;
+        uint120 nonce;
+        bool processed;
     }
 
-    function onERC721Received(
-        address operator,
-        address from,
-        uint256 tokenId,
-        bytes calldata data
-    ) external returns (bytes4) {
-        return IERC721Receiver.onERC721Received.selector;
+    /// key is tokenId
+    mapping (uint256 => Message) public outboundMessages;
+
+    mapping (uint256 => Message) public inboundMessages;
+
+    /// key is tokenId
+    /// value is if conflict or not
+    mapping (uint256 => bool) public conflict;
+
+    event LogOutbound(uint256 tokenId, Message message, bytes32 hashlock);
+    event LogCancelOutbound(uint256 tokenId, Message message);
+    event LogInbound(uint256 tokenId, Message message);
+    event LogReceive(uint256 tokenId, Message message, uint8 v, bytes32 r, bytes32 s);
+    event LogFinish(uint256 tokenId, Message message);
+    event LogTokenConflict(uint256 tokenId);
+
+    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721(name_, symbol_) AnyCallClient(anyCallProxy_) {}
+
+    function claim(uint256 tokenId) public {
+        _safeMint(_msgSender(), tokenId);
+    }
+
+    function newNonce() internal returns (uint120) {
+        return ++nonce;
+    }
+
+    function outbound(uint256 tokenId, uint256 toChainID) public returns (bytes32 hashlock) {
+        require(Address.isContract(_msgSender()) == false);
+        _safeTransfer(_msgSender(), address(this), tokenId, "");
+
+        // build message
+        uint64 fromChainID;
+        assembly {
+            fromChainID := chainid()
+        }
+        uint120 outnonce = newNonce();
+        Message memory message = Message(fromChainID, uint64(toChainID), _msgSender(), uint96(block.timestamp), outnonce, false);
+
+        outboundMessages[tokenId] = message;
+
+        // anycall inbound
+        bytes memory inboundData = abi.encodeWithSignature("inbound(uint256,address,uint256,uint256,bytes)", tokenId, _msgSender(), block.timestamp, uint256(outnonce));
+        AnyCallProxy(anyCallProxy).anyCall(targets[toChainID], inboundData, address(0), toChainID);
+
+        hashlock = keccak256(abi.encode(tokenId, message));
+
+        emit LogOutbound(tokenId, message, hashlock);
+        return hashlock;
+    }
+
+    /// only when timeout
+    function cancelOutbound(uint256 tokenId) public {
+        Message memory message = outboundMessages[tokenId];
+
+        require(message.processed == false, "cannot cancel processed message");
+        require(message.owner != address(0) && message.timestamp > 0);
+        require(block.timestamp > uint256(message.timestamp) + CancelTimeout, "cannot cancel before timeout");
+
+        outboundMessages[tokenId] = Message(0, 0, address(0), 0, 0, false);
+
+        _safeTransfer(address(this), message.owner, tokenId, "");
+        emit LogCancelOutbound(tokenId, message);
+    }
+
+    /// check if not processed
+    /// lock tokenId
+    /// add to inboundMessage
+    /// can be called by anyone for any times
+    function inbound(uint256 tokenId, address receiver, uint256 timestamp, uint256 sourceChainNonce) public {
+        require(block.timestamp < timestamp + RelayTimeout, "inbound call out of date");
+
+        if (ownerOf(tokenId) == address(0)) {
+            _safeMint(address(this), tokenId);
+        } else if (ownerOf(tokenId) == address(this)) {
+        } else {
+            conflict[tokenId] = true;
+            emit LogTokenConflict(tokenId);
+            return;
+        }
+
+        (, uint256 fromChainID) = AnyCallProxy(anyCallProxy).context();
+        uint64 toChainID;
+        assembly {
+            toChainID := chainid()
+        }
+        Message memory message = Message(uint64(fromChainID), toChainID, receiver, uint96(timestamp), uint120(sourceChainNonce), false);
+        inboundMessages[tokenId] = message;
+
+        emit LogInbound(tokenId, message);
+    }
+
+    /// check signature
+    /// unlock and transfer token to receiver
+    /// anyCall onReceive
+    function inboundReceive(uint256 tokenId, uint8 v, bytes32 r, bytes32 s) public {
+        require(inboundMessages[tokenId].processed == false, "inbound already received");
+        require(block.timestamp < uint256(inboundMessages[tokenId].timestamp) + ReceiveTimeout, "inbound message out of date");
+
+        bytes32 hashlock = keccak256(abi.encode(tokenId, inboundMessages[tokenId]));
+        address signer = ecrecover(hashlock, v, r, s);
+        require(signer == inboundMessages[tokenId].owner, "wrong signature");
+
+        _safeTransfer(address(this), inboundMessages[tokenId].owner, tokenId, "");
+        inboundMessages[tokenId].processed = true;
+
+        // anyCall onReceive
+        uint256 fromChainID = uint256(inboundMessages[tokenId].fromChainID);
+        bytes memory inboundData = abi.encodeWithSignature("onReceive(uint256,uint8,bytes32,bytes32)", tokenId, v, r, s);
+        AnyCallProxy(anyCallProxy).anyCall(targets[fromChainID], inboundData, address(0), fromChainID);
+
+        emit LogReceive(tokenId, inboundMessages[tokenId], v, r, s);
+        return;
+    }
+
+    /// check if hash is already processed
+    /// check signature
+    /// clear lock
+    /// permenantly lock tokenId or burn it
+    function onReceive(uint256 tokenId, uint8 v, bytes32 r, bytes32 s) public {
+        if (ownerOf(tokenId) != address(this)) {
+            conflict[tokenId] = true;
+            emit LogTokenConflict(tokenId);
+            return;
+        }
+        Message memory message = outboundMessages[tokenId];
+        message.processed = false;
+        bytes32 hashlock = keccak256(abi.encode(tokenId, message));
+        address signer = ecrecover(hashlock, v, r, s);
+        require(signer == message.owner, "wrong signature");
+
+        outboundMessages[tokenId].processed = true;
+        emit LogFinish(tokenId, outboundMessages[tokenId]);
     }
 }
