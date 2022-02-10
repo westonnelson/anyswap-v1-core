@@ -261,8 +261,7 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
     /// check if not processed
     /// lock tokenId
     /// add to inboundMessage
-    /// can be called by anyone for any times
-    function inbound(uint256 tokenId, address receiver, uint256 timestamp, uint256 sourceChainNonce) public {
+    function inbound(uint256 tokenId, address receiver, uint256 timestamp, uint256 sourceChainNonce) public onlyAnyCall {
         require(block.timestamp < timestamp + RelayTimeout, "inbound call out of date");
 
         if (ownerOf(tokenId) == address(0)) {
