@@ -109,7 +109,7 @@ contract AnyCallProxy {
         require(!blacklist[msg.sender]); // dev: caller is blacklisted
         require(whitelist[msg.sender][_to][_toChainID]); // dev: request denied
 
-        emit AnyCall(msg.sender, _to, _data, _fallback, _toChainID);
+        emit LogAnyCall(msg.sender, _to, _data, _fallback, _toChainID);
     }
 
     /**
@@ -132,12 +132,12 @@ contract AnyCallProxy {
         (bool success, bytes memory result) = _to.call(_data);
         context = Context({sender: address(0), fromChainID: 0});
 
-        emit AnyExec(_from, _to, _data, success, result, _fallback, _fromChainID);
+        emit LogAnyExec(_from, _to, _data, success, result, _fallback, _fromChainID);
 
         // Call the fallback on the originating chain with the call information (to, data)
         // _from, _fromChainID, _toChainID can all be identified via contextual info
         if (!success && _fallback != address(0)) {
-            emit AnyCall(
+            emit LogAnyCall(
                 _from,
                 _fallback,
                 abi.encodeWithSignature("anyFallback(address,bytes)", _to, _data),
