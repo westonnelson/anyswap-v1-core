@@ -3,9 +3,7 @@
 
 pragma solidity ^0.8.0;
 
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Context.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Address.sol";
+import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 
 /**
  * @dev Add on-chain data attach to ERC721 token
@@ -135,9 +133,15 @@ contract Multichain721 is ERC721WithData, ERC721Receiver, AnyCallClient {
     event LogOutbound(uint256 tokenId);
     event LogOutboundFail(uint256 tokenId);
 
-    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721WithData(name_, symbol_, anyCallProxy_) AnyCallClient(anyCallProxy_) {}
+    uint256 public chainPrefix;
 
-    function claim(uint256 tokenId) public {
+    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721WithData(name_, symbol_, anyCallProxy_) AnyCallClient(anyCallProxy_) {
+        chainPrefix = block.chainid;
+        chainPrefix <<= 128;
+    }
+
+    function claim(uint128 seed) public returns (uint256 tokenId) {
+        tokenId = chainPrefix + seed;
         _safeMint(_msgSender(), tokenId);
     }
 
@@ -178,6 +182,8 @@ contract Multichain721 is ERC721WithData, ERC721Receiver, AnyCallClient {
 contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallClient {
     using Address for address;
 
+    uint256 public chainPrefix;
+
     uint256 public constant RelayTimeout = 5 days;
     uint256 public constant ReceiveTimeout = 6 days;
     uint256 public constant CancelTimeout = 11 days;
@@ -210,9 +216,13 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
     event LogFinish(uint256 tokenId, Message message);
     event LogTokenConflict(uint256 tokenId);
 
-    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721(name_, symbol_) AnyCallClient(anyCallProxy_) {}
+    constructor(string memory name_, string memory symbol_, address anyCallProxy_) ERC721(name_, symbol_) AnyCallClient(anyCallProxy_) {
+        chainPrefix = block.chainid;
+        chainPrefix <<= 128;
+    }
 
-    function claim(uint256 tokenId) public {
+    function claim(uint256 seed) public returns (uint256 tokenId) {
+        tokenId = chainPrefix + seed;
         _safeMint(_msgSender(), tokenId);
     }
 
