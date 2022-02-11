@@ -87,10 +87,6 @@ abstract contract AnyCallClient is Context {
     /// value is Multichain721 contract on destination chain
     mapping (uint256 => address) public targets;
 
-    /// key is target contract address
-    /// value is chainIDs
-    mapping (address => uint256) public chains;
-
     modifier onlyAnyCall() {
         require(_msgSender() == anyCallProxy, "not authorized");
         _;
@@ -116,7 +112,6 @@ abstract contract AnyCallClient is Context {
 
     function setTarget(address target, uint256 chainId) public onlyAnyCallClientAdmin {
         targets[chainId] = target;
-        chains[target] = chainId;
     }
 
     function anyCallWithdraw(uint256 amount) public onlyAnyCallClientAdmin {
@@ -166,7 +161,7 @@ contract Multichain721 is ERC721WithData, ERC721Receiver, AnyCallClient {
     }
 
     function anyFallback(address to, bytes calldata data) public onlyAnyCall {
-        require(chains[to] > 0, "unknown target contract");
+        // TODO check to address
         // decode data
         (uint256 tokenId, address receiver,) = abi.decode(data[4:], (uint256, address, bytes));
         _safeTransfer(address(this), receiver, tokenId, "");
