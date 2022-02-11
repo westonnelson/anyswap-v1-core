@@ -23,8 +23,6 @@ contract AnyCallProxy {
     // Extra cost of execution (SSTOREs.SLOADs,ADDs,etc..)
     // TODO: analysis to verify the correct overhead gas usage
     uint256 constant EXECUTION_OVERHEAD = 100000;
-    // Delay for ownership transfer
-    uint256 constant TRANSFER_DELAY = 2 days;
 
     address public mpc;
     TransferData private _transferData;
@@ -207,21 +205,7 @@ contract AnyCallProxy {
     /// @notice Initiate a transfer of MPC status
     /// @param _newMPC The address of the new MPC
     function changeMPC(address _newMPC) external onlyMPC {
-        _transferData = TransferData({
-            effectiveTime: uint96(block.timestamp + TRANSFER_DELAY),
-            pendingMPC: _newMPC
-        });
-        emit TransferMPC(mpc, _newMPC, block.timestamp + TRANSFER_DELAY);
-    }
-
-    /// @notice Finalize the MPC transfer
-    /// @dev Only callable by the pending MPC and only after effective time
-    function applyMPC() external {
-        require(msg.sender == _transferData.pendingMPC); // dev: only pending MPC
-        require(block.timestamp >= _transferData.effectiveTime); // dev: too early
-
-        mpc = msg.sender;
-        _transferData = TransferData({effectiveTime: 0, pendingMPC: address(0)});
+        mpc = _newMPC;
     }
 
     /// @notice Get the total accrued fees in native currency
