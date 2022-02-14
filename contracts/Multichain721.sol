@@ -172,7 +172,6 @@ contract Multichain721 is ERC721WithData, ERC721Receiver, AnyCallClient {
 
  /**
  * Multichain721_Untrusted
- * Hashlock based multichain NFT contract
  */
 contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallClient {
     using Address for address;
@@ -204,7 +203,7 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
     /// value is if conflict or not
     mapping (uint256 => bool) public conflict;
 
-    event LogOutbound(uint256 tokenId, Message message, bytes32 hashlock);
+    event LogOutbound(uint256 tokenId, Message message, bytes32 hash);
     event LogCancelOutbound(uint256 tokenId, Message message);
     event LogInbound(uint256 tokenId, Message message);
     event LogReceive(uint256 tokenId, Message message, uint8 v, bytes32 r, bytes32 s);
@@ -225,7 +224,7 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
         return ++nonce;
     }
 
-    function outbound(uint256 tokenId, uint256 toChainID) public returns (bytes32 hashlock) {
+    function outbound(uint256 tokenId, uint256 toChainID) public returns (bytes32 hash) {
         require(Address.isContract(_msgSender()) == false);
         _safeTransfer(_msgSender(), address(this), tokenId, "");
 
@@ -243,10 +242,10 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
         bytes memory inboundData = abi.encodeWithSignature("inbound(uint256,address,uint256,uint256,bytes)", tokenId, _msgSender(), block.timestamp, uint256(outnonce));
         AnyCallProxy(anyCallProxy).anyCall(targets[toChainID], inboundData, address(0), toChainID);
 
-        hashlock = keccak256(abi.encode(tokenId, message));
+        hash = keccak256(abi.encode(tokenId, message));
 
-        emit LogOutbound(tokenId, message, hashlock);
-        return hashlock;
+        emit LogOutbound(tokenId, message, hash);
+        return hash;
     }
 
     /// only when timeout
@@ -296,8 +295,8 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
         require(inboundMessages[tokenId].processed == false, "inbound already received");
         require(block.timestamp < uint256(inboundMessages[tokenId].timestamp) + ReceiveTimeout, "inbound message out of date");
 
-        bytes32 hashlock = keccak256(abi.encode(tokenId, inboundMessages[tokenId]));
-        address signer = ecrecover(hashlock, v, r, s);
+        bytes32 hash = keccak256(abi.encode(tokenId, inboundMessages[tokenId]));
+        address signer = ecrecover(hash, v, r, s);
         require(signer == inboundMessages[tokenId].owner, "wrong signature");
 
         _safeTransfer(address(this), inboundMessages[tokenId].owner, tokenId, "");
@@ -324,8 +323,8 @@ contract Multichain721_Untrusted is ERC721Enumerable, ERC721Receiver, AnyCallCli
         }
         Message memory message = outboundMessages[tokenId];
         message.processed = false;
-        bytes32 hashlock = keccak256(abi.encode(tokenId, message));
-        address signer = ecrecover(hashlock, v, r, s);
+        bytes32 hash = keccak256(abi.encode(tokenId, message));
+        address signer = ecrecover(hash, v, r, s);
         require(signer == message.owner, "wrong signature");
 
         outboundMessages[tokenId].processed = true;
