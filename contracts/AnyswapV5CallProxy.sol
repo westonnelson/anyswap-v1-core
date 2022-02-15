@@ -113,6 +113,9 @@ contract AnyCallProxy {
     }
 
     function registerHandler(address target, uint256 salt) public returns (address) {
+        if (address(handler[target]) != address(0)) {
+            return address(handler[target]);
+        }
         bytes memory code = abi.encodePacked(handlerCreationCode, abi.encode(address(this), target));
         address addr;
         assembly {
