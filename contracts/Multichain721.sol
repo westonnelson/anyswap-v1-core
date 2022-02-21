@@ -141,24 +141,23 @@ contract Multichain721 is ERC721WithData, ERC721Receiver, AnyCallClient {
     }
 
     function outbound(uint256 tokenId, address receiver, uint256 toChainID) public {
-        bytes memory inboundData = abi.encodeWithSignature("inbound(uint256,address,bytes)", tokenId, receiver, encodeTokenData(tokenId));
+        bytes memory inboundData = abi.encodeWithSignature("inbound(uint256,address,address,bytes)", tokenId, msg.sender, receiver, encodeTokenData(tokenId));
         _burn(tokenId);
         // anycall inbound
         AnyCallProxy(anyCallProxy).anyCall(targets[toChainID], inboundData, address(this), toChainID);
     }
 
     /// mint or transfer tokenId to receiver
-    function inbound(uint256 tokenId, address receiver, bytes memory tokenData) public onlyAnyCall {
+    function inbound(uint256 tokenId, address from, address receiver, bytes memory tokenData) public onlyAnyCall {
         require(!_exists(tokenId), "tokenId is not available on destination chain");
         _safeMint(receiver, tokenId);
         setTokenDataFromBytes(tokenId, tokenData);
     }
 
     function anyFallback(address to, bytes calldata data) public onlyAnyCall {
-        // TODO check to address
-        // decode data
-        (uint256 tokenId, address receiver,) = abi.decode(data[4:], (uint256, address, bytes));
-        _safeTransfer(address(this), receiver, tokenId, "");
+        (uint256 tokenId, address from, , bytes memory tokenData) = abi.decode(data[4:], (uint256, address, address, bytes));
+        _safeMint(from, tokenId, "");
+        setTokenDataFromBytes(tokenId, tokenData);
         emit LogOutboundFail(tokenId);
         return;
     }
