@@ -126,7 +126,6 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
   function withdraw(uint tokenId) external {
     require(msg.sender == ownerOf(tokenId));
     _burn(tokenId);
-    IERC721(underlying).approve(address(this), tokenId);
     IERC721(underlying).safeTransferFrom(address(this), msg.sender, tokenId);
     emit LogWithdraw(msg.sender, tokenId);
   }
@@ -153,7 +152,6 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
       _safeMint(msg.sender, tokenId);
     } else {
       require(!_exists(tokenId));
-      IERC721(underlying).approve(address(this), tokenId);
       IERC721(underlying).safeTransferFrom(address(this), receiver, tokenId);
     }
     setExtraData(tokenId, extraData);
@@ -167,7 +165,6 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
       _safeMint(msg.sender, tokenId);
     } else {
       require(!_exists(tokenId));
-      IERC721(underlying).approve(address(this), tokenId);
       IERC721(underlying).safeTransferFrom(address(this), from, tokenId);
     }
     setExtraData(tokenId, extraData);
