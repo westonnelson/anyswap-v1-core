@@ -145,7 +145,7 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
     emit LogOutbound(tokenId, receiver, toChainId);
   }
 
-  /// @notice Call by anycall when there's an outbound log. Unlock underlying nft of mint any721 nft to receiver address.
+  /// @notice Call by anycall when there's an outbound log. Unlock underlying nft or mint any721 nft to receiver address.
   function inbound(uint tokenId, address from, address receiver, bytes memory extraData) onlyAnyCall external {
     if (underlying == address(0)) {
       _safeMint(msg.sender, tokenId);
