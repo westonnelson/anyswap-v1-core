@@ -448,7 +448,7 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
 
         require(verifyEIP712(target, hashStruct, v, r, s) || verifyPersonalSign(target, hashStruct, v, r, s));
 
-        require(to != address(0) || to != address(this));
+        require(to != address(0) && to != address(this));
 
         uint256 balance = balanceOf[target];
         require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
@@ -487,7 +487,7 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
     /// Requirements:
     ///   - caller account must have at least `value` AnyswapV3ERC20 token.
     function transfer(address to, uint256 value) external override returns (bool) {
-        require(to != address(0) || to != address(this));
+        require(to != address(0) && to != address(this));
         uint256 balance = balanceOf[msg.sender];
         require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
 
@@ -509,7 +509,7 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
     ///   - `from` account must have at least `value` balance of AnyswapV3ERC20 token.
     ///   - `from` account must have approved caller to spend at least `value` of AnyswapV3ERC20 token, unless `from` and caller are the same account.
     function transferFrom(address from, address to, uint256 value) external override returns (bool) {
-        require(to != address(0) || to != address(this));
+        require(to != address(0) && to != address(this));
         if (from != msg.sender) {
             // _decreaseAllowance(from, msg.sender, value);
             uint256 allowed = allowance[from][msg.sender];
@@ -540,7 +540,7 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
     ///   - caller account must have at least `value` AnyswapV3ERC20 token.
     /// For more information on transferAndCall format, see https://github.com/ethereum/EIPs/issues/677.
     function transferAndCall(address to, uint value, bytes calldata data) external override returns (bool) {
-        require(to != address(0) || to != address(this));
+        require(to != address(0) && to != address(this));
 
         uint256 balance = balanceOf[msg.sender];
         require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
