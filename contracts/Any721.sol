@@ -1,23 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.4.22 <0.9.0;
 
-import "https://github.com/OpenZeppelin/openzeppelin-contracts/blob/master/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
-
-interface IERC721 {
-    event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
-    event Approval(address indexed owner, address indexed approved, uint256 indexed tokenId);
-    event ApprovalForAll(address indexed owner, address indexed operator, bool approved);
-
-    function balanceOf(address owner) external view returns (uint256 balance);
-    function ownerOf(uint256 tokenId) external view returns (address owner);
-    function safeTransferFrom(address from, address to, uint256 tokenId) external;
-    function transferFrom(address from, address to, uint256 tokenId) external;
-    function approve(address to, uint256 tokenId) external;
-    function getApproved(uint256 tokenId) external view returns (address operator);
-    function setApprovalForAll(address operator, bool _approved) external;
-    function isApprovedForAll(address owner, address operator) external view returns (bool);
-    function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external;
-}
+import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 
 abstract contract ERC721Receiver {
     function onERC721Received(
@@ -92,7 +76,7 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
   event LogInbound(uint tokenId, address receiver, uint fromChainId);
   event LogOutboundFail(uint256 tokenId);
 
-  constructor (string memory name_, string memory symbol_, address underlying_, address anyCallProxy_) ERC721WithData(name_, symbol_, anyCallProxy_) AnyCallClient(anyCallProxy_) {
+  constructor (string memory name_, string memory symbol_, address underlying_, address anyCallProxy_) ERC721(name_, symbol_) AnyCallClient(anyCallProxy_) {
     underlying = underlying_;
   }
 
@@ -139,9 +123,9 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
       require(!_exists(tokenId));
       IERC721(underlying).safeTransferFrom(msg.sender, address(this), tokenId);
     }
-    bytes memory extraData = getExtraData(tokenId);
+    bytes memory extraData = this.getExtraData(tokenId);
     bytes memory inboundMsg = abi.encodeWithSignature("inbound(uint256,address,address,bytes)", tokenId, msg.sender, receiver, extraData);
-    AnyCallProxy(anyCallProxy).anyCall(targets[toChainID], inboundMsg, address(this), toChainID);
+    AnyCallProxy(anyCallProxy).anyCall(targets[toChainId], inboundMsg, address(this), toChainId);
     emit LogOutbound(tokenId, receiver, toChainId);
   }
 
@@ -154,7 +138,8 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
       IERC721(underlying).safeTransferFrom(address(this), receiver, tokenId);
     }
     setExtraData(tokenId, extraData);
-    emit LogInbound(tokenId, receiver, Context.fromChainID);
+    (, uint256 fromChainId) = AnyCallProxy(anyCallProxy).context();
+    emit LogInbound(tokenId, receiver, fromChainId);
   }
 
   /// @notice Called by anycall when outbound fails. Return nft to its original owner.
