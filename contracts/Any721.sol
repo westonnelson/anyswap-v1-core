@@ -32,7 +32,7 @@ abstract contract AnyCallClient is Context {
 
     /// key is destination chain id
     /// value is Multichain721 contract on destination chain
-    mapping (uint256 => address) public targets;
+    mapping (uint256 => address) public counterparts;
 
     modifier onlyAnyCall() {
         require(_msgSender() == anyCallProxy, "not authorized");
@@ -57,8 +57,8 @@ abstract contract AnyCallClient is Context {
         anyCallClientAdmin = admin_;
     }
 
-    function setTarget(address target, uint256 chainId) public onlyAnyCallClientAdmin {
-        targets[chainId] = target;
+    function setCounterpart(address counterpart, uint256 chainId) public onlyAnyCallClientAdmin {
+        counterparts[chainId] = counterpart;
     }
 
     function anyCallWithdraw(uint256 amount) public onlyAnyCallClientAdmin returns (bool, bytes memory) {
@@ -67,8 +67,8 @@ abstract contract AnyCallClient is Context {
     }
 }
 
-contract Any721 is ERC721Enumerable, AnyCallClient {
-  address underlying;
+contract Any721 is ERC721Enumerable, ERC721Receiver, AnyCallClient {
+  address public underlying;
 
   event LogDeposit(address user, uint tokenId);
   event LogWithdraw(address user, uint tokenId);
@@ -125,7 +125,7 @@ contract Any721 is ERC721Enumerable, AnyCallClient {
     }
     bytes memory extraData = this.getExtraData(tokenId);
     bytes memory inboundMsg = abi.encodeWithSignature("inbound(uint256,address,address,bytes)", tokenId, msg.sender, receiver, extraData);
-    AnyCallProxy(anyCallProxy).anyCall(targets[toChainId], inboundMsg, address(this), toChainId);
+    AnyCallProxy(anyCallProxy).anyCall(counterparts[toChainId], inboundMsg, address(this), toChainId);
     emit LogOutbound(tokenId, receiver, toChainId);
   }
 
