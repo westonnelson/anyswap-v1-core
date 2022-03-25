@@ -1,21 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 pragma solidity ^0.8.6;
 
-contract AnyCallHandler {
-    address public anyCallProxy;
-    address public target;
-
-    constructor (address AnyCallProxy_, address target_) {
-        anyCallProxy = AnyCallProxy_;
-        target = target_;
-    }
-
-    function handleCall(bytes calldata data) public returns (bool, bytes memory) {
-        require(msg.sender == anyCallProxy);
-        return target.call(data);
-    }
-}
-
 contract AnyCallProxy {
     // Context information for destination chain targets
     struct Context {
@@ -35,26 +20,28 @@ contract AnyCallProxy {
         address pendingMPC;
     }
 
-    /// AnyCallHandler creation code
-    bytes constant handlerCreationCode = type(AnyCallHandler).creationCode;
-
     // Extra cost of execution (SSTOREs.SLOADs,ADDs,etc..)
     // TODO: analysis to verify the correct overhead gas usage
     uint256 constant EXECUTION_OVERHEAD = 100000;
 
     address public mpc;
-    TransferData private _transferData;
 
-    // on source chain
     mapping(address => bool) public blacklist;
     mapping(address => mapping(address => mapping(uint256 => bool))) public whitelist;
-    // on destination chain
-    mapping(address => AnyCallHandler) public handler;
-    
+
     Context public context;
 
+    uint256 public minReserveBudget;
     mapping(address => uint256) public executionBudget;
     FeeData private _feeData;
+
+    uint private unlocked = 1;
+    modifier lock() {
+        require(unlocked == 1);
+        unlocked = 0;
+        _;
+        unlocked = 1;
+    }
 
     event LogAnyCall(
         address indexed from,
@@ -85,7 +72,6 @@ contract AnyCallProxy {
     );
     event TransferMPC(address oldMPC, address newMPC, uint256 effectiveTime);
     event UpdatePremium(uint256 oldPremium, uint256 newPremium);
-    event LogRegisterHandler(address handler);
 
     constructor(address _mpc, uint128 _premium) {
         mpc = _mpc;
@@ -104,29 +90,13 @@ contract AnyCallProxy {
     /// @dev Charge an account for execution costs on this chain
     /// @param _from The account to charge for execution costs
     modifier charge(address _from) {
+        require(executionBudget[_from] >= minReserveBudget);
         uint256 gasUsed = gasleft() + EXECUTION_OVERHEAD;
         _;
         uint256 totalCost = (gasUsed - gasleft()) * (tx.gasprice + _feeData.premium);
 
         executionBudget[_from] -= totalCost;
         _feeData.accruedFees += uint128(totalCost);
-    }
-
-    function registerHandler(address target, uint256 salt) public returns (address) {
-        if (address(handler[target]) != address(0)) {
-            return address(handler[target]);
-        }
-        bytes memory code = abi.encodePacked(handlerCreationCode, abi.encode(address(this), target));
-        address addr;
-        assembly {
-            addr := create2(0, add(code, 0x20), mload(code), salt)
-            if iszero(extcodesize(addr)) {
-                revert(0, 0)
-            }
-        }
-        emit LogRegisterHandler(address(AnyCallHandler(addr)));
-        handler[target] = AnyCallHandler(addr);
-        return addr;
     }
 
     /**
@@ -164,9 +134,9 @@ contract AnyCallProxy {
         bytes calldata _data,
         address _fallback,
         uint256 _fromChainID
-    ) external charge(_from) onlyMPC {
+    ) external lock charge(_from) onlyMPC {
         context = Context({sender: _from, fromChainID: _fromChainID});
-        (bool success, bytes memory result) = handler[_to].handleCall(_data);
+        (bool success, bytes memory result) = _to.call(_data);
         context = Context({sender: address(0), fromChainID: 0});
 
         emit LogAnyExec(_from, _to, _data, success, result, _fallback, _fromChainID);
@@ -219,9 +189,25 @@ contract AnyCallProxy {
         uint256 _toChainID,
         bool _flag
     ) external onlyMPC {
-        require(_toChainID != block.chainid, "AnyCall: Forbidden");
         whitelist[_from][_to][_toChainID] = _flag;
         emit SetWhitelist(_from, _to, _toChainID, _flag);
+    }
+
+    /// @notice Set the whitelist premitting an account to issue a cross chain request
+    /// @param _from The account which will submit cross chain interaction requests
+    /// @param _tos The targets of the cross chain interaction
+    /// @param _toChainIDs The target chain ids
+    function setWhitelists(
+        address _from,
+        address[] calldata _tos,
+        uint256[] calldata _toChainIDs,
+        bool _flag
+    ) external onlyMPC {
+        require(_tos.length == _toChainIDs.length);
+        for (uint256 i = 0; i < _tos.length; i++) {
+            whitelist[_from][_tos[i]][_toChainIDs[i]] = _flag;
+            emit SetWhitelist(_from, _tos[i], _toChainIDs[i], _flag);
+        }
     }
 
     /// @notice Set an account's blacklist status
@@ -234,6 +220,18 @@ contract AnyCallProxy {
         emit SetBlacklist(_account, _flag);
     }
 
+    /// @notice Set an accounts' blacklist status
+    /// @dev A simpler way to deactive an account's permission to issue
+    ///     cross chain requests without updating the whitelist
+    /// @param _accounts The accounts to update blacklist status of
+    /// @param _flag The blacklist state to put `_account` in
+    function setBlacklists(address[] calldata _accounts, bool _flag) external onlyMPC {
+        for (uint256 i = 0; i < _accounts.length; i++) {
+            blacklist[_accounts[i]] = _flag;
+            emit SetBlacklist(_accounts[i], _flag);
+        }
+    }
+
     /// @notice Set the premimum for cross chain executions
     /// @param _premium The premium per gas
     function setPremium(uint128 _premium) external onlyMPC {
@@ -241,9 +239,16 @@ contract AnyCallProxy {
         _feeData.premium = _premium;
     }
 
+    /// @notice Set minimum exection budget for cross chain executions
+    /// @param _minBudget The minimum exection budget
+    function setMinReserveBudget(uint128 _minBudget) external onlyMPC {
+        minReserveBudget = _minBudget;
+    }
+
     /// @notice Initiate a transfer of MPC status
     /// @param _newMPC The address of the new MPC
     function changeMPC(address _newMPC) external onlyMPC {
+        emit TransferMPC(mpc, _newMPC, block.timestamp);
         mpc = _newMPC;
     }
 
@@ -258,15 +263,5 @@ contract AnyCallProxy {
     ///     to the miner it is given to the MPC executing cross chain requests
     function premium() external view returns(uint128) {
         return _feeData.premium;
-    }
-
-    /// @notice Get the effective time at which pendingMPC may become MPC
-    function effectiveTime() external view returns(uint256) {
-        return _transferData.effectiveTime;
-    }
-    
-    /// @notice Get the address of the pending MPC
-    function pendingMPC() external view returns(address) {
-        return _transferData.pendingMPC;
     }
 }
