@@ -180,7 +180,6 @@ contract AnyCallProxy {
         uint256 _toChainID,
         bool _flag
     ) external onlyMPC {
-        require(_toChainID != block.chainid, "AnyCall: Forbidden");
         whitelist[_from][_to][_toChainID] = _flag;
         emit SetWhitelist(_from, _to, _toChainID, _flag);
     }
