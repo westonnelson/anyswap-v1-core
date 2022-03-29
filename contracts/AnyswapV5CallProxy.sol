@@ -14,12 +14,6 @@ contract AnyCallProxy {
         uint128 premium;
     }
 
-    // Packed MPC transfer info (only 1 storage slot)
-    struct TransferData {
-        uint96 effectiveTime;
-        address pendingMPC;
-    }
-
     // Extra cost of execution (SSTOREs.SLOADs,ADDs,etc..)
     // TODO: analysis to verify the correct overhead gas usage
     uint256 constant EXECUTION_OVERHEAD = 100000;
@@ -62,7 +56,7 @@ contract AnyCallProxy {
     );
 
     event Deposit(address indexed account, uint256 amount);
-    event Withdrawl(address indexed account, uint256 amount);
+    event Withdraw(address indexed account, uint256 amount);
     event SetBlacklist(address indexed account, bool flag);
     event SetWhitelist(
         address indexed from,
@@ -165,7 +159,7 @@ contract AnyCallProxy {
     /// @param _amount The amount to withdraw from your account
     function withdraw(uint256 _amount) external {
         executionBudget[msg.sender] -= _amount;
-        emit Withdrawl(msg.sender, _amount);
+        emit Withdraw(msg.sender, _amount);
         (bool success,) = msg.sender.call{value: _amount}("");
         require(success);
     }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-pragma solidity >=0.8.2;
+pragma solidity ^0.8.2;
 
 interface ISushiswapV2Pair {
     function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast);
@@ -108,24 +108,6 @@ library SushiswapV2Library {
 
 // helper methods for interacting with ERC20 tokens and sending NATIVE that do not consistently return true/false
 library TransferHelper {
-    function safeApprove(address token, address to, uint value) internal {
-        // bytes4(keccak256(bytes('approve(address,uint256)')));
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0x095ea7b3, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), 'TransferHelper: APPROVE_FAILED');
-    }
-
-    function safeTransfer(address token, address to, uint value) internal {
-        // bytes4(keccak256(bytes('transfer(address,uint256)')));
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0xa9059cbb, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), 'TransferHelper: TRANSFER_FAILED');
-    }
-
-    function safeTransferFrom(address token, address from, address to, uint value) internal {
-        // bytes4(keccak256(bytes('transferFrom(address,address,uint256)')));
-        (bool success, bytes memory data) = token.call(abi.encodeWithSelector(0x23b872dd, from, to, value));
-        require(success && (data.length == 0 || abi.decode(data, (bool))), 'TransferHelper: TRANSFER_FROM_FAILED');
-    }
-
     function safeTransferNative(address to, uint value) internal {
         (bool success,) = to.call{value:value}(new bytes(0));
         require(success, 'TransferHelper: NATIVE_TRANSFER_FAILED');
@@ -194,6 +176,7 @@ library SafeERC20 {
         );
         callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, value));
     }
+
     function callOptionalReturn(IERC20 token, bytes memory data) private {
         require(address(token).isContract(), "SafeERC20: call to non-contract");
 
@@ -215,6 +198,9 @@ contract AnyswapV6Router {
     address public immutable factory;
     address public immutable wNATIVE;
 
+    // delay for timelock functions
+    uint public constant DELAY = 2 days;
+
     bool public enableSwapTrade;
     modifier swapTradeEnabled() {
         require(enableSwapTrade, 'AnyswapV6Router: SwapTrade disabled');
@@ -222,7 +208,7 @@ contract AnyswapV6Router {
     }
 
     modifier ensure(uint deadline) {
-        require(deadline >= block.timestamp, 'AnyswapV3Router: EXPIRED');
+        require(deadline >= block.timestamp, 'AnyswapV6Router: EXPIRED');
         _;
     }
 
@@ -241,9 +227,7 @@ contract AnyswapV6Router {
     address private _newMPC;
     uint256 private _newMPCEffectiveTime;
 
-
     event LogChangeMPC(address indexed oldMPC, address indexed newMPC, uint indexed effectiveTime, uint chainID);
-    event LogChangeRouter(address indexed oldRouter, address indexed newRouter, uint chainID);
     event LogAnySwapIn(bytes32 indexed txhash, address indexed token, address indexed to, uint amount, uint fromChainID, uint toChainID);
     event LogAnySwapOut(address indexed token, address indexed from, address indexed to, uint amount, uint fromChainID, uint toChainID);
     event LogAnySwapOut(address indexed token, address indexed from, string to, uint amount, uint fromChainID, uint toChainID);
@@ -251,7 +235,7 @@ contract AnyswapV6Router {
     event LogAnySwapTradeTokensForNative(address[] path, address indexed from, address indexed to, uint amountIn, uint amountOutMin, uint fromChainID, uint toChainID);
 
     modifier onlyMPC() {
-        require(msg.sender == mpc(), "AnyswapV3Router: FORBIDDEN");
+        require(msg.sender == mpc(), "AnyswapV6Router: FORBIDDEN");
         _;
     }
 
@@ -262,25 +246,24 @@ contract AnyswapV6Router {
         return _oldMPC;
     }
 
-    function cID() public view returns (uint id) {
-        assembly {id := chainid()}
+    function cID() public view returns (uint) {
+        return block.chainid;
     }
 
     function setEnableSwapTrade(bool enable) external onlyMPC {
         enableSwapTrade = enable;
     }
 
-    function changeMPC(address newMPC) public onlyMPC returns (bool) {
-        require(newMPC != address(0), "AnyswapV3Router: address(0x0)");
+    function changeMPC(address newMPC) external onlyMPC returns (bool) {
+        require(newMPC != address(0), "AnyswapV6Router: address(0)");
         _oldMPC = mpc();
         _newMPC = newMPC;
-        _newMPCEffectiveTime = block.timestamp + 2*24*3600;
+        _newMPCEffectiveTime = block.timestamp + DELAY;
         emit LogChangeMPC(_oldMPC, _newMPC, _newMPCEffectiveTime, cID());
         return true;
     }
 
-    function changeVault(address token, address newVault) public onlyMPC returns (bool) {
-        require(newVault != address(0), "AnyswapV3Router: address(0x0)");
+    function changeVault(address token, address newVault) external onlyMPC returns (bool) {
         return AnyswapV1ERC20(token).changeVault(newVault);
     }
 
@@ -308,12 +291,15 @@ contract AnyswapV6Router {
 
     // Swaps `amount` `token` from this chain to `toChainID` chain with recipient `to` by minting with `underlying`
     function anySwapOutUnderlying(address token, address to, uint amount, uint toChainID) external {
-        IERC20(AnyswapV1ERC20(token).underlying()).safeTransferFrom(msg.sender, token, amount);
+        address _underlying = AnyswapV1ERC20(token).underlying();
+        require(_underlying != address(0), "AnyswapV6Router: no underlying");
+        IERC20(_underlying).safeTransferFrom(msg.sender, token, amount);
         emit LogAnySwapOut(token, msg.sender, to, amount, cID(), toChainID);
     }
 
     function anySwapOutNative(address token, address to, uint toChainID) external payable {
-        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV3Router: underlying is not wNATIVE");
+        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
+        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV6Router: underlying is not wNATIVE");
         IwNATIVE(wNATIVE).deposit{value: msg.value}();
         assert(IwNATIVE(wNATIVE).transfer(token, msg.value));
         emit LogAnySwapOut(token, msg.sender, to, msg.value, cID(), toChainID);
@@ -331,12 +317,15 @@ contract AnyswapV6Router {
     }
 
     function anySwapOutUnderlying(address token, string memory to, uint amount, uint toChainID) external {
-        IERC20(AnyswapV1ERC20(token).underlying()).safeTransferFrom(msg.sender, token, amount);
+        address _underlying = AnyswapV1ERC20(token).underlying();
+        require(_underlying != address(0), "AnyswapV6Router: no underlying");
+        IERC20(_underlying).safeTransferFrom(msg.sender, token, amount);
         emit LogAnySwapOut(token, msg.sender, to, amount, cID(), toChainID);
     }
 
     function anySwapOutNative(address token, string memory to, uint toChainID) external payable {
-        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV3Router: underlying is not wNATIVE");
+        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
+        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV6Router: underlying is not wNATIVE");
         IwNATIVE(wNATIVE).deposit{value: msg.value}();
         assert(IwNATIVE(wNATIVE).transfer(token, msg.value));
         emit LogAnySwapOut(token, msg.sender, to, msg.value, cID(), toChainID);
@@ -377,7 +366,8 @@ contract AnyswapV6Router {
     }
 
     function depositNative(address token, address to) external payable returns (uint) {
-        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV3Router: underlying is not wNATIVE");
+        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
+        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV6Router: underlying is not wNATIVE");
         IwNATIVE(wNATIVE).deposit{value: msg.value}();
         assert(IwNATIVE(wNATIVE).transfer(token, msg.value));
         AnyswapV1ERC20(token).depositVault(msg.value, to);
@@ -385,8 +375,14 @@ contract AnyswapV6Router {
     }
 
     function withdrawNative(address token, uint amount, address to) external returns (uint) {
-        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV3Router: underlying is not wNATIVE");
+        require(wNATIVE != address(0), "AnyswapV6Router: zero wNATIVE");
+        require(AnyswapV1ERC20(token).underlying() == wNATIVE, "AnyswapV6Router: underlying is not wNATIVE");
+
+        uint256 old_balance = IERC20(wNATIVE).balanceOf(address(this));
         AnyswapV1ERC20(token).withdrawVault(msg.sender, amount, address(this));
+        uint256 new_balance = IERC20(wNATIVE).balanceOf(address(this));
+        assert(new_balance == old_balance + amount);
+
         IwNATIVE(wNATIVE).withdraw(amount);
         TransferHelper.safeTransferNative(to, amount);
         return amount;
@@ -443,8 +439,6 @@ contract AnyswapV6Router {
         uint toChainID
     ) external virtual swapTradeEnabled ensure(deadline) {
         IERC20(AnyswapV1ERC20(path[0]).underlying()).safeTransferFrom(msg.sender, path[0], amountIn);
-        AnyswapV1ERC20(path[0]).depositVault(amountIn, msg.sender);
-        AnyswapV1ERC20(path[0]).burn(msg.sender, amountIn);
         emit LogAnySwapTradeTokensForTokens(path, msg.sender, to, amountIn, amountOutMin, cID(), toChainID);
     }
 
@@ -488,8 +482,6 @@ contract AnyswapV6Router {
         uint toChainID
     ) external virtual swapTradeEnabled ensure(deadline) {
         IERC20(AnyswapV1ERC20(path[0]).underlying()).safeTransferFrom(msg.sender, path[0], amountIn);
-        AnyswapV1ERC20(path[0]).depositVault(amountIn, msg.sender);
-        AnyswapV1ERC20(path[0]).burn(msg.sender, amountIn);
         emit LogAnySwapTradeTokensForNative(path, msg.sender, to, amountIn, amountOutMin, cID(), toChainID);
     }
 
@@ -504,9 +496,9 @@ contract AnyswapV6Router {
         uint deadline,
         uint fromChainID
     ) external onlyMPC virtual swapTradeEnabled ensure(deadline) returns (uint[] memory amounts) {
-        require(path[path.length - 1] == wNATIVE, 'AnyswapV3Router: INVALID_PATH');
+        require(path[path.length - 1] == wNATIVE, 'AnyswapV6Router: INVALID_PATH');
         amounts = SushiswapV2Library.getAmountsOut(factory, amountIn, path);
-        require(amounts[amounts.length - 1] >= amountOutMin, 'AnyswapV3Router: INSUFFICIENT_OUTPUT_AMOUNT');
+        require(amounts[amounts.length - 1] >= amountOutMin, 'AnyswapV6Router: INSUFFICIENT_OUTPUT_AMOUNT');
         _anySwapIn(txs, path[0],  SushiswapV2Library.pairFor(factory, path[0], path[1]), amounts[0], fromChainID);
         _swap(amounts, path, address(this));
         IwNATIVE(wNATIVE).withdraw(amounts[amounts.length - 1]);
@@ -514,12 +506,12 @@ contract AnyswapV6Router {
     }
 
     // **** LIBRARY FUNCTIONS ****
-    function quote(uint amountA, uint reserveA, uint reserveB) public pure virtual returns (uint amountB) {
+    function quote(uint amountA, uint reserveA, uint reserveB) external pure virtual returns (uint amountB) {
         return SushiswapV2Library.quote(amountA, reserveA, reserveB);
     }
 
     function getAmountOut(uint amountIn, uint reserveIn, uint reserveOut)
-        public
+        external
         pure
         virtual
         returns (uint amountOut)
@@ -528,7 +520,7 @@ contract AnyswapV6Router {
     }
 
     function getAmountIn(uint amountOut, uint reserveIn, uint reserveOut)
-        public
+        external
         pure
         virtual
         returns (uint amountIn)
@@ -537,7 +529,7 @@ contract AnyswapV6Router {
     }
 
     function getAmountsOut(uint amountIn, address[] memory path)
-        public
+        external
         view
         virtual
         returns (uint[] memory amounts)
@@ -546,7 +538,7 @@ contract AnyswapV6Router {
     }
 
     function getAmountsIn(uint amountOut, address[] memory path)
-        public
+        external
         view
         virtual
         returns (uint[] memory amounts)
