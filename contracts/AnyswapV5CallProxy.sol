@@ -109,6 +109,7 @@ contract AnyCallProxy {
     ) external {
         require(!blacklist[msg.sender]); // dev: caller is blacklisted
         require(whitelist[msg.sender][_to][_toChainID]); // dev: request denied
+        require(_fallback == address(0) || _fallback == msg.sender);
 
         emit LogAnyCall(msg.sender, _to, _data, _fallback, _toChainID);
     }
@@ -140,7 +141,7 @@ contract AnyCallProxy {
         if (!success && _fallback != address(0)) {
             emit LogAnyCall(
                 _from,
-                _fallback,
+                _from,
                 abi.encodeWithSignature("anyFallback(address,bytes)", _to, _data),
                 address(0),
                 _fromChainID
