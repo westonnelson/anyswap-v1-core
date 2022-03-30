@@ -103,7 +103,7 @@ abstract contract AnyCallClient is Context {
 
     function _anyFallback(address to, bytes calldata data) external virtual;
 
-    function anyFallback(address to, bytes calldata data) external virtual {
+    function anyFallback(address to, bytes calldata data) onlyAnyCallFallback external virtual {
         this._anyFallback(to, data);
     }
 }
