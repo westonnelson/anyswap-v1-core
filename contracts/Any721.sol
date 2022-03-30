@@ -101,7 +101,11 @@ abstract contract AnyCallClient is Context {
         return anyCallClientAdmin.call{value: amount}("");
     }
 
-    function anyFallback(address to, bytes calldata data) external virtual;
+    function _anyFallback(address to, bytes calldata data) external virtual;
+
+    function anyFallback(address to, bytes calldata data) external virtual {
+        this._anyFallback(to, data);
+    }
 }
 
 abstract contract Any721Router is AnyCallClient {
@@ -212,7 +216,7 @@ contract Any721MintBurnRouter is Any721Router {
     }
 
     /// @notice Called by anycall when outbound fails. Return nft to its original owner.
-    function anyFallback(address to, bytes calldata data)
+    function _anyFallback(address to, bytes calldata data)
         external
         override
         onlyAnyCallFallback
@@ -272,7 +276,7 @@ contract Any721PremintRouter is ERC721Receiver, Any721Router {
     }
 
     /// @notice Called by anycall when outbound fails. Return nft to its original owner.
-    function anyFallback(address to, bytes calldata data)
+    function _anyFallback(address to, bytes calldata data)
         external
         override
         onlyAnyCallFallback
