@@ -181,7 +181,11 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function Swapin(bytes32 txhash, address account, uint256 amount) external onlyAuth returns (bool) {
-        _mint(account, amount);
+        if (underlying != address(0) && IERC20(underlying).balanceOf(address(this)) >= amount) {
+            IERC20(underlying).safeTransfer(account, amount);
+        } else {
+            _mint(account, amount);
+        }
         emit LogSwapin(txhash, account, amount);
         return true;
     }
@@ -189,7 +193,11 @@ contract AnyswapV6ERC20 is IERC20 {
     function Swapout(uint256 amount, address bindaddr) external returns (bool) {
         require(!_vaultOnly, "AnyswapV6ERC20: vaultOnly");
         require(bindaddr != address(0), "AnyswapV6ERC20: address(0)");
-        _burn(msg.sender, amount);
+        if (underlying != address(0) && balanceOf[msg.sender] < amount) {
+            IERC20(underlying).safeTransferFrom(msg.sender, address(this), amount);
+        } else {
+            _burn(msg.sender, amount);
+        }
         emit LogSwapout(msg.sender, bindaddr, amount);
         return true;
     }
