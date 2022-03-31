@@ -17,61 +17,6 @@ interface IERC20 {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
 
-/**
- * @dev Interface of the ERC2612 standard as defined in the EIP.
- *
- * Adds the {permit} method, which can be used to change one's
- * {IERC20-allowance} without having to send a transaction, by signing a
- * message. This allows users to spend tokens without having to hold Ether.
- *
- * See https://eips.ethereum.org/EIPS/eip-2612.
- */
-interface IERC2612 {
-
-    /**
-     * @dev Returns the current ERC2612 nonce for `owner`. This value must be
-     * included whenever a signature is generated for {permit}.
-     *
-     * Every successful call to {permit} increases ``owner``'s nonce by one. This
-     * prevents a signature from being used multiple times.
-     */
-    function nonces(address owner) external view returns (uint256);
-    function permit(address target, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external;
-    function transferWithPermit(address target, address to, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external returns (bool);
-
-}
-
-/// @dev Wrapped ERC-20 v10 (AnyswapV3ERC20) is an ERC-20 ERC-20 wrapper. You can `deposit` ERC-20 and obtain an AnyswapV3ERC20 balance which can then be operated as an ERC-20 token. You can
-/// `withdraw` ERC-20 from AnyswapV3ERC20, which will then burn AnyswapV3ERC20 token in your wallet. The amount of AnyswapV3ERC20 token in any wallet is always identical to the
-/// balance of ERC-20 deposited minus the ERC-20 withdrawn with that specific wallet.
-interface IAnyswapV3ERC20 is IERC20, IERC2612 {
-
-    /// @dev Sets `value` as allowance of `spender` account over caller account's AnyswapV3ERC20 token,
-    /// after which a call is executed to an ERC677-compliant contract with the `data` parameter.
-    /// Emits {Approval} event.
-    /// Returns boolean value indicating whether operation succeeded.
-    /// For more information on approveAndCall format, see https://github.com/ethereum/EIPs/issues/677.
-    function approveAndCall(address spender, uint256 value, bytes calldata data) external returns (bool);
-
-    /// @dev Moves `value` AnyswapV3ERC20 token from caller's account to account (`to`),
-    /// after which a call is executed to an ERC677-compliant contract with the `data` parameter.
-    /// A transfer to `address(0)` triggers an ERC-20 withdraw matching the sent AnyswapV3ERC20 token in favor of caller.
-    /// Emits {Transfer} event.
-    /// Returns boolean value indicating whether operation succeeded.
-    /// Requirements:
-    ///   - caller account must have at least `value` AnyswapV3ERC20 token.
-    /// For more information on transferAndCall format, see https://github.com/ethereum/EIPs/issues/677.
-    function transferAndCall(address to, uint value, bytes calldata data) external returns (bool);
-}
-
-interface ITransferReceiver {
-    function onTokenTransfer(address, uint, bytes calldata) external returns (bool);
-}
-
-interface IApprovalReceiver {
-    function onTokenApproval(address, uint, bytes calldata) external returns (bool);
-}
-
 library Address {
     function isContract(address account) internal view returns (bool) {
         bytes32 codehash;
@@ -113,17 +58,13 @@ library SafeERC20 {
     }
 }
 
-contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
+contract AnyswapV6ERC20 is IERC20 {
     using SafeERC20 for IERC20;
     string public name;
     string public symbol;
     uint8  public immutable override decimals;
 
     address public immutable underlying;
-
-    bytes32 public constant PERMIT_TYPEHASH = keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
-    bytes32 public constant TRANSFER_TYPEHASH = keccak256("Transfer(address owner,address to,uint256 value,uint256 nonce,uint256 deadline)");
-    bytes32 public immutable DOMAIN_SEPARATOR;
 
     /// @dev Records amount of AnyswapV3ERC20 token owned by account.
     mapping (address => uint256) public override balanceOf;
@@ -137,7 +78,6 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
 
     // configurable delay for timelock functions
     uint public delay = 2*24*3600;
-
 
     // set of minters, can be this bridge or other bridges
     mapping(address => bool) public isMinter;
@@ -264,10 +204,6 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
         return;
     }
 
-    /// @dev Records current ERC2612 nonce for account. This value must be included whenever signature is generated for {permit}.
-    /// Every successful call to {permit} increases account's nonce by one. This prevents signature from being used multiple times.
-    mapping (address => uint256) public override nonces;
-
     /// @dev Records number of AnyswapV3ERC20 token that account (second) will be allowed to spend on behalf of another account (first) through {transferFrom}.
     mapping (address => mapping (address => uint256)) public override allowance;
 
@@ -294,15 +230,6 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
         pendingVault = _vault;
         delayVault = block.timestamp;
 
-        uint256 chainId;
-        assembly {chainId := chainid()}
-        DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
-                keccak256(bytes(name)),
-                keccak256(bytes("1")),
-                chainId,
-                address(this)));
     }
 
     /// @dev Returns the total supply of AnyswapV3ERC20 token as the ETH held in this contract.
@@ -405,93 +332,6 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
         return true;
     }
 
-    /// @dev Sets `value` as allowance of `spender` account over caller account's AnyswapV3ERC20 token,
-    /// after which a call is executed to an ERC677-compliant contract with the `data` parameter.
-    /// Emits {Approval} event.
-    /// Returns boolean value indicating whether operation succeeded.
-    /// For more information on approveAndCall format, see https://github.com/ethereum/EIPs/issues/677.
-    function approveAndCall(address spender, uint256 value, bytes calldata data) external override returns (bool) {
-        // _approve(msg.sender, spender, value);
-        allowance[msg.sender][spender] = value;
-        emit Approval(msg.sender, spender, value);
-
-        return IApprovalReceiver(spender).onTokenApproval(msg.sender, value, data);
-    }
-
-    /// @dev Sets `value` as allowance of `spender` account over `owner` account's AnyswapV3ERC20 token, given `owner` account's signed approval.
-    /// Emits {Approval} event.
-    /// Requirements:
-    ///   - `deadline` must be timestamp in future.
-    ///   - `v`, `r` and `s` must be valid `secp256k1` signature from `owner` account over EIP712-formatted function arguments.
-    ///   - the signature must use `owner` account's current nonce (see {nonces}).
-    ///   - the signer cannot be zero address and must be `owner` account.
-    /// For more information on signature format, see https://eips.ethereum.org/EIPS/eip-2612#specification[relevant EIP section].
-    /// AnyswapV3ERC20 token implementation adapted from https://github.com/albertocuestacanada/ERC20Permit/blob/master/contracts/ERC20Permit.sol.
-    function permit(address target, address spender, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external override {
-        require(block.timestamp <= deadline, "AnyswapV3ERC20: Expired permit");
-
-        bytes32 hashStruct = keccak256(
-            abi.encode(
-                PERMIT_TYPEHASH,
-                target,
-                spender,
-                value,
-                nonces[target]++,
-                deadline));
-
-        require(verifyEIP712(target, hashStruct, v, r, s) || verifyPersonalSign(target, hashStruct, v, r, s));
-
-        // _approve(owner, spender, value);
-        allowance[target][spender] = value;
-        emit Approval(target, spender, value);
-    }
-
-    function transferWithPermit(address target, address to, uint256 value, uint256 deadline, uint8 v, bytes32 r, bytes32 s) external override returns (bool) {
-        require(block.timestamp <= deadline, "AnyswapV3ERC20: Expired permit");
-
-        bytes32 hashStruct = keccak256(
-            abi.encode(
-                TRANSFER_TYPEHASH,
-                target,
-                to,
-                value,
-                nonces[target]++,
-                deadline));
-
-        require(verifyEIP712(target, hashStruct, v, r, s) || verifyPersonalSign(target, hashStruct, v, r, s));
-
-        require(to != address(0) || to != address(this));
-
-        uint256 balance = balanceOf[target];
-        require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
-
-        balanceOf[target] = balance - value;
-        balanceOf[to] += value;
-        emit Transfer(target, to, value);
-
-        return true;
-    }
-
-    function verifyEIP712(address target, bytes32 hashStruct, uint8 v, bytes32 r, bytes32 s) internal view returns (bool) {
-        bytes32 hash = keccak256(
-            abi.encodePacked(
-                "\x19\x01",
-                DOMAIN_SEPARATOR,
-                hashStruct));
-        address signer = ecrecover(hash, v, r, s);
-        return (signer != address(0) && signer == target);
-    }
-
-    function verifyPersonalSign(address target, bytes32 hashStruct, uint8 v, bytes32 r, bytes32 s) internal view returns (bool) {
-        bytes32 hash = keccak256(
-            abi.encodePacked(
-                "\x19Ethereum Signed Message:\n32",
-                DOMAIN_SEPARATOR,
-                hashStruct));
-        address signer = ecrecover(hash, v, r, s);
-        return (signer != address(0) && signer == target);
-    }
-
     /// @dev Moves `value` AnyswapV3ERC20 token from caller's account to account (`to`).
     /// A transfer to `address(0)` triggers an ETH withdraw matching the sent AnyswapV3ERC20 token in favor of caller.
     /// Emits {Transfer} event.
@@ -541,26 +381,5 @@ contract AnyswapV6ERC20 is IAnyswapV3ERC20 {
         emit Transfer(from, to, value);
 
         return true;
-    }
-
-    /// @dev Moves `value` AnyswapV3ERC20 token from caller's account to account (`to`),
-    /// after which a call is executed to an ERC677-compliant contract with the `data` parameter.
-    /// A transfer to `address(0)` triggers an ETH withdraw matching the sent AnyswapV3ERC20 token in favor of caller.
-    /// Emits {Transfer} event.
-    /// Returns boolean value indicating whether operation succeeded.
-    /// Requirements:
-    ///   - caller account must have at least `value` AnyswapV3ERC20 token.
-    /// For more information on transferAndCall format, see https://github.com/ethereum/EIPs/issues/677.
-    function transferAndCall(address to, uint value, bytes calldata data) external override returns (bool) {
-        require(to != address(0) || to != address(this));
-
-        uint256 balance = balanceOf[msg.sender];
-        require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
-
-        balanceOf[msg.sender] = balance - value;
-        balanceOf[to] += value;
-        emit Transfer(msg.sender, to, value);
-
-        return ITransferReceiver(to).onTokenTransfer(msg.sender, value, data);
     }
 }
