@@ -65,8 +65,9 @@ contract AnyswapV6ERC20 is IERC20 {
     uint8  public immutable override decimals;
 
     address public immutable underlying;
+    bool public constant underlyingIsMinted = false;
 
-    /// @dev Records amount of AnyswapV3ERC20 token owned by account.
+    /// @dev Records amount of AnyswapV6ERC20 token owned by account.
     mapping (address => uint256) public override balanceOf;
     uint256 private _totalSupply;
 
@@ -76,8 +77,8 @@ contract AnyswapV6ERC20 is IERC20 {
     // flag to enable/disable swapout vs vault.burn so multiple events are triggered
     bool private _vaultOnly;
 
-    // configurable delay for timelock functions
-    uint public delay = 2*24*3600;
+    // delay for timelock functions
+    uint public constant DELAY = 2 days;
 
     // set of minters, can be this bridge or other bridges
     mapping(address => bool) public isMinter;
@@ -93,23 +94,20 @@ contract AnyswapV6ERC20 is IERC20 {
     uint public delayVault;
 
     modifier onlyAuth() {
-        require(isMinter[msg.sender], "AnyswapV4ERC20: FORBIDDEN");
+        require(isMinter[msg.sender], "AnyswapV6ERC20: FORBIDDEN");
         _;
     }
 
     modifier onlyVault() {
-        require(msg.sender == mpc(), "AnyswapV3ERC20: FORBIDDEN");
+        require(msg.sender == vault, "AnyswapV6ERC20: FORBIDDEN");
         _;
     }
 
-    function owner() public view returns (address) {
-        return mpc();
+    function owner() external view returns (address) {
+        return vault;
     }
 
-    function mpc() public view returns (address) {
-        if (block.timestamp >= delayVault) {
-            return pendingVault;
-        }
+    function mpc() external view returns (address) {
         return vault;
     }
 
@@ -119,35 +117,39 @@ contract AnyswapV6ERC20 is IERC20 {
 
     function initVault(address _vault) external onlyVault {
         require(_init);
+        _init = false;
         vault = _vault;
-        pendingVault = _vault;
         isMinter[_vault] = true;
         minters.push(_vault);
-        delayVault = block.timestamp;
-        _init = false;
     }
 
     function setVault(address _vault) external onlyVault {
-        require(_vault != address(0), "AnyswapV3ERC20: address(0x0)");
+        require(_vault != address(0), "AnyswapV6ERC20: address(0)");
         pendingVault = _vault;
-        delayVault = block.timestamp + delay;
+        delayVault = block.timestamp + DELAY;
     }
 
     function applyVault() external onlyVault {
-        require(block.timestamp >= delayVault);
+        require(pendingVault != address(0) && block.timestamp >= delayVault);
         vault = pendingVault;
+
+        pendingVault = address(0);
+        delayVault = 0;
     }
 
     function setMinter(address _auth) external onlyVault {
-        require(_auth != address(0), "AnyswapV3ERC20: address(0x0)");
+        require(_auth != address(0), "AnyswapV6ERC20: address(0)");
         pendingMinter = _auth;
-        delayMinter = block.timestamp + delay;
+        delayMinter = block.timestamp + DELAY;
     }
 
     function applyMinter() external onlyVault {
-        require(block.timestamp >= delayMinter);
+        require(pendingMinter != address(0) && block.timestamp >= delayMinter);
         isMinter[pendingMinter] = true;
         minters.push(pendingMinter);
+
+        pendingMinter = address(0);
+        delayMinter = 0;
     }
 
     // No time delay revoke minter emergency function
@@ -160,10 +162,11 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function changeVault(address newVault) external onlyVault returns (bool) {
-        require(newVault != address(0), "AnyswapV3ERC20: address(0x0)");
+        require(newVault != address(0), "AnyswapV6ERC20: address(0)");
+        emit LogChangeVault(vault, newVault, block.timestamp);
         vault = newVault;
-        pendingVault = newVault;
-        emit LogChangeVault(vault, pendingVault, block.timestamp);
+        pendingVault = address(0);
+        delayVault = 0;
         return true;
     }
 
@@ -173,12 +176,11 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function burn(address from, uint256 amount) external onlyAuth returns (bool) {
-        require(from != address(0), "AnyswapV3ERC20: address(0x0)");
         _burn(from, amount);
         return true;
     }
 
-    function Swapin(bytes32 txhash, address account, uint256 amount) public onlyAuth returns (bool) {
+    function Swapin(bytes32 txhash, address account, uint256 amount) external onlyAuth returns (bool) {
         if (underlying != address(0) && IERC20(underlying).balanceOf(address(this)) >= amount) {
             IERC20(underlying).safeTransfer(account, amount);
         } else {
@@ -188,9 +190,9 @@ contract AnyswapV6ERC20 is IERC20 {
         return true;
     }
 
-    function Swapout(uint256 amount, string memory bindaddr) public returns (bool) {
+    function Swapout(uint256 amount, string memory bindaddr) external returns (bool) {
+        require(!_vaultOnly, "AnyswapV6ERC20: vaultOnly");
         verifyBindAddr(bindaddr);
-        require(!_vaultOnly, "AnyswapV4ERC20: onlyAuth");
         if (underlying != address(0)) {
             IERC20(underlying).safeTransferFrom(msg.sender, address(this), amount);
         } else {
@@ -201,10 +203,10 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function verifyBindAddr(string memory bindaddr) pure internal {
-        return;
+        require(bytes(bindaddr).length > 0);
     }
 
-    /// @dev Records number of AnyswapV3ERC20 token that account (second) will be allowed to spend on behalf of another account (first) through {transferFrom}.
+    /// @dev Records number of AnyswapV6ERC20 token that account (second) will be allowed to spend on behalf of another account (first) through {transferFrom}.
     mapping (address => mapping (address => uint256)) public override allowance;
 
     event LogChangeVault(address indexed oldVault, address indexed newVault, uint indexed effectiveTime);
@@ -216,7 +218,7 @@ contract AnyswapV6ERC20 is IERC20 {
         symbol = _symbol;
         decimals = _decimals;
         underlying = _underlying;
-        if (_underlying != address(0x0)) {
+        if (_underlying != address(0)) {
             require(_decimals == IERC20(_underlying).decimals());
         }
 
@@ -227,12 +229,9 @@ contract AnyswapV6ERC20 is IERC20 {
         _vaultOnly = false;
 
         vault = _vault;
-        pendingVault = _vault;
-        delayVault = block.timestamp;
-
     }
 
-    /// @dev Returns the total supply of AnyswapV3ERC20 token as the ETH held in this contract.
+    /// @dev Returns the total supply of AnyswapV6ERC20 token as the ETH held in this contract.
     function totalSupply() external view override returns (uint256) {
         return _totalSupply;
     }
@@ -258,7 +257,8 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function _deposit(uint amount, address to) internal returns (uint) {
-        require(underlying != address(0x0) && underlying != address(this));
+        require(!underlyingIsMinted);
+        require(underlying != address(0) && underlying != address(this));
         _mint(to, amount);
         return amount;
     }
@@ -280,6 +280,8 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function _withdraw(address from, uint amount, address to) internal returns (uint) {
+        require(!underlyingIsMinted);
+        require(underlying != address(0) && underlying != address(this));
         _burn(from, amount);
         IERC20(underlying).safeTransfer(to, amount);
         return amount;
@@ -316,32 +318,33 @@ contract AnyswapV6ERC20 is IERC20 {
     function _burn(address account, uint256 amount) internal {
         require(account != address(0), "ERC20: burn from the zero address");
 
-        balanceOf[account] -= amount;
+        uint256 balance = balanceOf[account];
+        require(balance >= amount, "ERC20: burn amount exceeds balance");
+
+        balanceOf[account] = balance - amount;
         _totalSupply -= amount;
         emit Transfer(account, address(0), amount);
     }
 
-    /// @dev Sets `value` as allowance of `spender` account over caller account's AnyswapV3ERC20 token.
+    /// @dev Sets `value` as allowance of `spender` account over caller account's AnyswapV6ERC20 token.
     /// Emits {Approval} event.
     /// Returns boolean value indicating whether operation succeeded.
     function approve(address spender, uint256 value) external override returns (bool) {
-        // _approve(msg.sender, spender, value);
         allowance[msg.sender][spender] = value;
         emit Approval(msg.sender, spender, value);
 
         return true;
     }
 
-    /// @dev Moves `value` AnyswapV3ERC20 token from caller's account to account (`to`).
-    /// A transfer to `address(0)` triggers an ETH withdraw matching the sent AnyswapV3ERC20 token in favor of caller.
+    /// @dev Moves `value` AnyswapV6ERC20 token from caller's account to account (`to`).
     /// Emits {Transfer} event.
     /// Returns boolean value indicating whether operation succeeded.
     /// Requirements:
-    ///   - caller account must have at least `value` AnyswapV3ERC20 token.
+    ///   - caller account must have at least `value` AnyswapV6ERC20 token.
     function transfer(address to, uint256 value) external override returns (bool) {
-        require(to != address(0) || to != address(this));
+        require(to != address(0) && to != address(this));
         uint256 balance = balanceOf[msg.sender];
-        require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
+        require(balance >= value, "AnyswapV6ERC20: transfer amount exceeds balance");
 
         balanceOf[msg.sender] = balance - value;
         balanceOf[to] += value;
@@ -350,23 +353,21 @@ contract AnyswapV6ERC20 is IERC20 {
         return true;
     }
 
-    /// @dev Moves `value` AnyswapV3ERC20 token from account (`from`) to account (`to`) using allowance mechanism.
+    /// @dev Moves `value` AnyswapV6ERC20 token from account (`from`) to account (`to`) using allowance mechanism.
     /// `value` is then deducted from caller account's allowance, unless set to `type(uint256).max`.
-    /// A transfer to `address(0)` triggers an ETH withdraw matching the sent AnyswapV3ERC20 token in favor of caller.
     /// Emits {Approval} event to reflect reduced allowance `value` for caller account to spend from account (`from`),
     /// unless allowance is set to `type(uint256).max`
     /// Emits {Transfer} event.
     /// Returns boolean value indicating whether operation succeeded.
     /// Requirements:
-    ///   - `from` account must have at least `value` balance of AnyswapV3ERC20 token.
-    ///   - `from` account must have approved caller to spend at least `value` of AnyswapV3ERC20 token, unless `from` and caller are the same account.
+    ///   - `from` account must have at least `value` balance of AnyswapV6ERC20 token.
+    ///   - `from` account must have approved caller to spend at least `value` of AnyswapV6ERC20 token, unless `from` and caller are the same account.
     function transferFrom(address from, address to, uint256 value) external override returns (bool) {
-        require(to != address(0) || to != address(this));
+        require(to != address(0) && to != address(this));
         if (from != msg.sender) {
-            // _decreaseAllowance(from, msg.sender, value);
             uint256 allowed = allowance[from][msg.sender];
             if (allowed != type(uint256).max) {
-                require(allowed >= value, "AnyswapV3ERC20: request exceeds allowance");
+                require(allowed >= value, "AnyswapV6ERC20: request exceeds allowance");
                 uint256 reduced = allowed - value;
                 allowance[from][msg.sender] = reduced;
                 emit Approval(from, msg.sender, reduced);
@@ -374,7 +375,7 @@ contract AnyswapV6ERC20 is IERC20 {
         }
 
         uint256 balance = balanceOf[from];
-        require(balance >= value, "AnyswapV3ERC20: transfer amount exceeds balance");
+        require(balance >= value, "AnyswapV6ERC20: transfer amount exceeds balance");
 
         balanceOf[from] = balance - value;
         balanceOf[to] += value;

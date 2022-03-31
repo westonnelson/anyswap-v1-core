@@ -65,6 +65,7 @@ contract AnyswapV6ERC20 is IERC20 {
     uint8  public immutable override decimals;
 
     address public immutable underlying;
+    bool public constant underlyingIsMinted = false;
 
     /// @dev Records amount of AnyswapV6ERC20 token owned by account.
     mapping (address => uint256) public override balanceOf;
@@ -165,6 +166,7 @@ contract AnyswapV6ERC20 is IERC20 {
         emit LogChangeVault(vault, newVault, block.timestamp);
         vault = newVault;
         pendingVault = address(0);
+        delayVault = 0;
         return true;
     }
 
@@ -243,6 +245,7 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function _deposit(uint amount, address to) internal returns (uint) {
+        require(!underlyingIsMinted);
         require(underlying != address(0) && underlying != address(this));
         _mint(to, amount);
         return amount;
@@ -265,6 +268,7 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function _withdraw(address from, uint amount, address to) internal returns (uint) {
+        require(!underlyingIsMinted);
         require(underlying != address(0) && underlying != address(this));
         _burn(from, amount);
         IERC20(underlying).safeTransfer(to, amount);
@@ -367,5 +371,4 @@ contract AnyswapV6ERC20 is IERC20 {
 
         return true;
     }
-
 }
