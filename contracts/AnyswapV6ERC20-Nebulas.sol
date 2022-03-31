@@ -193,7 +193,7 @@ contract AnyswapV6ERC20 is IERC20 {
     function Swapout(uint256 amount, string memory bindaddr) external returns (bool) {
         require(!_vaultOnly, "AnyswapV6ERC20: vaultOnly");
         verifyBindAddr(bindaddr);
-        if (underlying != address(0)) {
+        if (underlying != address(0) && balanceOf[msg.sender] < amount) {
             IERC20(underlying).safeTransferFrom(msg.sender, address(this), amount);
         } else {
             _burn(msg.sender, amount);
