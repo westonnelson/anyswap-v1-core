@@ -178,7 +178,7 @@ abstract contract Any721Router is AnyCallClient {
         uint256 tokenId,
         address receiver,
         uint256 toChainId
-    ) external {
+    ) external charge(token) payable {
         if (tokenType[token] == ERC721_MINT_BURN) {
             outboundMintBurn(token, tokenId, receiver, toChainId);
         } else if (tokenType[token] == ERC721_PREMINT) {
