@@ -123,7 +123,11 @@ abstract contract Any721Router is AnyCallClient {
     );
     event LogOutboundFail(address token, uint256 tokenId);
 
+    bytes32 public constant ERC721_MINT_BURN = keccak256("ERC721_MINT_BURN");
+    bytes32 public constant ERC721_PREMINT = keccak256("ERC721_PREMINT");
+
     mapping(address => mapping(uint256 => address)) public tokenMap;
+    mapping(address => bytes32) public tokenType;
     address public routerAdmin;
 
     mapping(address => uint256) public fee;
@@ -137,6 +141,16 @@ abstract contract Any721Router is AnyCallClient {
         AnyCallClient(anyCallProxy_)
     {
         routerAdmin = routerAdmin_;
+    }
+
+    function setPremintToken(address originToken) public {
+        require(msg.sender == routerAdmin);
+        tokenType[originToken] = ERC721_PREMINT;
+    }
+
+    function setMintBurnToken(address originToken) public {
+        require(msg.sender == routerAdmin);
+        tokenType[originToken] = ERC721_MINT_BURN;
     }
 
     function setTokenMap(
@@ -164,28 +178,49 @@ abstract contract Any721Router is AnyCallClient {
         uint256 tokenId,
         address receiver,
         uint256 toChainId
-    ) external virtual;
+    ) external {
+        if (tokenType[token] == ERC721_MINT_BURN) {
+            outboundMintBurn(token, tokenId, receiver, toChainId);
+        } else if (tokenType[token] == ERC721_PREMINT) {
+            outboundPremint(token, tokenId, receiver, toChainId);
+        }
+        return;
+    }
 
     function inbound(
         address token,
         uint256 tokenId,
         address from,
         address receiver
-    ) external virtual;
-}
+    ) external onlyAnyCall {
+        if (tokenType[token] == ERC721_MINT_BURN) {
+            inboundMintBurn(token, tokenId, from, receiver);
+        } else if (tokenType[token] == ERC721_PREMINT) {
+            inboundPremint(token, tokenId, from, receiver);
+        }
+        return;
+    }
 
-contract Any721MintBurnRouter is Any721Router {
-    constructor(address routerAdmin_, address anyCallProxy_)
-        Any721Router(routerAdmin_, anyCallProxy_)
-    {}
+    function _anyFallback(address to, bytes calldata data) external override onlyAnyCallFallback {
+        (address token, uint256 tokenId, address from, ) = abi.decode(
+            data[4:],
+            (address, uint256, address, address)
+        );
+        if (tokenType[token] == ERC721_MINT_BURN) {
+            _anyFallbackMintBurn(token, tokenId, from);
+        } else if (tokenType[token] == ERC721_PREMINT) {
+            _anyFallbackPremint(token, tokenId, from);
+        }
+        return;
+    }
 
     /// @notice Lock in any721 nft or burn underlying nft, emit an outbound log.
-    function outbound(
+    function outboundMintBurn(
         address token,
         uint256 tokenId,
         address receiver,
         uint256 toChainId
-    ) external override {
+    ) internal {
         IERC721Mintburnable(token).burn(tokenId); // require approval
         bytes memory inboundMsg = abi.encodeWithSignature(
             "inbound(address,uint256,address,address)",
@@ -204,48 +239,32 @@ contract Any721MintBurnRouter is Any721Router {
     }
 
     /// @notice Call by anycall when there's an outbound log. Unlock underlying nft or mint any721 nft to receiver address.
-    function inbound(
+    function inboundMintBurn(
         address token,
         uint256 tokenId,
         address from,
         address receiver
-    ) external override onlyAnyCall {
+    ) internal {
         IERC721Mintburnable(token).mint(receiver, tokenId);
         (, uint256 fromChainId) = AnyCallProxy(anyCallProxy).context();
         emit LogInbound(token, tokenId, receiver, fromChainId);
     }
 
     /// @notice Called by anycall when outbound fails. Return nft to its original owner.
-    function _anyFallback(address to, bytes calldata data)
-        external
-        override
-        onlyAnyCallFallback
+    function _anyFallbackMintBurn(address token, uint256 tokenId, address from)
+        internal
     {
-        (address token, uint256 tokenId, address from, ) = abi.decode(
-            data[4:],
-            (address, uint256, address, address)
-        );
         IERC721Mintburnable(token).mint(from, tokenId);
         emit LogOutboundFail(token, tokenId);
     }
-}
-
-contract Any721PremintRouter is ERC721Receiver, Any721Router {
-    /**
-    The ERC721 token operator should premint tokenIds and transfer them to this contract
-    in order to let users bridge in.
-     */
-    constructor(address routerAdmin_, address anyCallProxy_)
-        Any721Router(routerAdmin_, anyCallProxy_)
-    {}
 
     /// @notice Lock in any721 nft or burn underlying nft, emit an outbound log.
-    function outbound(
+    function outboundPremint(
         address token,
         uint256 tokenId,
         address receiver,
         uint256 toChainId
-    ) external override {
+    ) internal {
         IERC721(token).safeTransferFrom(msg.sender, address(this), tokenId);
         bytes memory inboundMsg = abi.encodeWithSignature(
             "inbound(address,uint256,address,address)",
@@ -264,27 +283,21 @@ contract Any721PremintRouter is ERC721Receiver, Any721Router {
     }
 
     /// @notice Call by anycall when there's an outbound log. Unlock underlying nft or mint any721 nft to receiver address.
-    function inbound(
+    function inboundPremint(
         address token,
         uint256 tokenId,
         address from,
         address receiver
-    ) external override onlyAnyCall {
+    ) internal {
         IERC721(token).safeTransferFrom(address(this), receiver, tokenId); // asserting tokenId has been premint to this contract
         (, uint256 fromChainId) = AnyCallProxy(anyCallProxy).context();
         emit LogInbound(token, tokenId, receiver, fromChainId);
     }
 
     /// @notice Called by anycall when outbound fails. Return nft to its original owner.
-    function _anyFallback(address to, bytes calldata data)
-        external
-        override
-        onlyAnyCallFallback
+    function _anyFallbackPremint(address token, uint256 tokenId, address from)
+        internal
     {
-        (address token, uint256 tokenId, address from, ) = abi.decode(
-            data[4:],
-            (address, uint256, address, address)
-        );
         IERC721(token).safeTransferFrom(address(this), from, tokenId);
         emit LogOutboundFail(token, tokenId);
     }
