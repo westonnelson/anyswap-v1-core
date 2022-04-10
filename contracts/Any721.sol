@@ -108,7 +108,7 @@ abstract contract AnyCallClient is Context {
     }
 }
 
-abstract contract Any721Router is AnyCallClient {
+contract Any721Router is AnyCallClient {
     event LogOutbound(
         address token,
         uint256 tokenId,
