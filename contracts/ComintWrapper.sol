@@ -2,7 +2,7 @@
 
 pragma solidity ^0.8.2;
 
-interface IConfluxToken {
+interface IComintToken {
     function mint(address to, uint256 amount) external;
     function burnFrom(address account, uint256 amount) external;
 }
@@ -131,7 +131,6 @@ contract ComintWrapper {
     function Swapout(uint256 amount, address bindaddr) external returns (bool) {
         require(!_vaultOnly, "AnyswapV6ERC20: vaultOnly");
         require(bindaddr != address(0), "AnyswapV6ERC20: address(0)");
-        require(underlying != address(0));
         _burn(msg.sender, amount);
         emit LogSwapout(msg.sender, bindaddr, amount);
         return true;
@@ -169,7 +168,7 @@ contract ComintWrapper {
      * - `to` cannot be the zero address.
      */
     function _mint(address account, uint256 amount) internal {
-        IConfluxToken(underlying).mint(account, amount);
+        IComintToken(underlying).mint(account, amount);
         _totalSupply += amount;
     }
 
@@ -185,7 +184,7 @@ contract ComintWrapper {
      * - `account` must have at least `amount` tokens.
      */
     function _burn(address account, uint256 amount) internal {
-        IConfluxToken(underlying).burnFrom(account, amount);
+        IComintToken(underlying).burnFrom(account, amount);
         _totalSupply -= amount;
     }
 }
