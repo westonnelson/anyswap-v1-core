@@ -18,6 +18,9 @@ contract AnyCallProxy {
     // TODO: analysis to verify the correct overhead gas usage
     uint256 constant EXECUTION_OVERHEAD = 100000;
 
+    mapping(address => bool) public isAdmin;
+    address[] public admins;
+
     address public mpc;
 
     mapping(address => bool) public blacklist;
@@ -66,8 +69,14 @@ contract AnyCallProxy {
     );
     event TransferMPC(address oldMPC, address newMPC, uint256 effectiveTime);
     event UpdatePremium(uint256 oldPremium, uint256 newPremium);
+    event AddAdmin(address admin);
+    event RemoveAdmin(address admin);
 
-    constructor(address _mpc, uint128 _premium) {
+    constructor(address _admin, address _mpc, uint128 _premium) {
+        if (_admin != address(0)) {
+            isAdmin[_admin] = true;
+            admins.push(_admin);
+        }
         mpc = _mpc;
         _feeData.premium = _premium;
 
@@ -78,6 +87,12 @@ contract AnyCallProxy {
     /// @dev Access control function
     modifier onlyMPC() {
         require(msg.sender == mpc); // dev: only MPC
+        _;
+    }
+
+    /// @dev Access control function
+    modifier onlyAdmin() {
+        require(isAdmin[msg.sender]); // dev: only admin
         _;
     }
 
@@ -183,7 +198,7 @@ contract AnyCallProxy {
         address _to,
         uint256 _toChainID,
         bool _flag
-    ) external onlyMPC {
+    ) external onlyAdmin {
         whitelist[_from][_to][_toChainID] = _flag;
         emit SetWhitelist(_from, _to, _toChainID, _flag);
     }
@@ -197,7 +212,7 @@ contract AnyCallProxy {
         address[] calldata _tos,
         uint256[] calldata _toChainIDs,
         bool _flag
-    ) external onlyMPC {
+    ) external onlyAdmin {
         require(_tos.length == _toChainIDs.length);
         for (uint256 i = 0; i < _tos.length; i++) {
             whitelist[_from][_tos[i]][_toChainIDs[i]] = _flag;
@@ -210,7 +225,7 @@ contract AnyCallProxy {
     ///     cross chain requests without updating the whitelist
     /// @param _account The account to update blacklist status of
     /// @param _flag The blacklist state to put `_account` in
-    function setBlacklist(address _account, bool _flag) external onlyMPC {
+    function setBlacklist(address _account, bool _flag) external onlyAdmin {
         blacklist[_account] = _flag;
         emit SetBlacklist(_account, _flag);
     }
@@ -220,7 +235,7 @@ contract AnyCallProxy {
     ///     cross chain requests without updating the whitelist
     /// @param _accounts The accounts to update blacklist status of
     /// @param _flag The blacklist state to put `_account` in
-    function setBlacklists(address[] calldata _accounts, bool _flag) external onlyMPC {
+    function setBlacklists(address[] calldata _accounts, bool _flag) external onlyAdmin {
         for (uint256 i = 0; i < _accounts.length; i++) {
             blacklist[_accounts[i]] = _flag;
             emit SetBlacklist(_accounts[i], _flag);
@@ -258,5 +273,33 @@ contract AnyCallProxy {
     ///     to the miner it is given to the MPC executing cross chain requests
     function premium() external view returns(uint128) {
         return _feeData.premium;
+    }
+
+    /// @notice Add admin
+    function addAdmin(address _admin) external onlyMPC {
+        require(!isAdmin[_admin]);
+        isAdmin[_admin] = true;
+        admins.push(_admin);
+        emit AddAdmin(_admin);
+    }
+
+    /// @notice Remove admin
+    function removeAdmin(address _admin) external onlyMPC {
+        require(isAdmin[_admin]);
+        isAdmin[_admin] = false;
+        uint256 length = admins.length;
+        for (uint256 i = 0; i < length - 1; i++) {
+            if (admins[i] == _admin) {
+                admins[i] = admins[length - 1];
+                break;
+            }
+        }
+        admins.pop();
+        emit RemoveAdmin(_admin);
+    }
+
+    /// @notice Get all admins
+    function getAllAdmins() external view returns (address[] memory) {
+        return admins;
     }
 }
