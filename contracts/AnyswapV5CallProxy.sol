@@ -26,6 +26,9 @@ contract AnyCallProxy {
     mapping(address => bool) public blacklist;
     mapping(address => mapping(address => mapping(uint256 => bool))) public whitelist;
 
+    bool public freeTestMode;
+    bool public paused;
+
     Context public context;
 
     uint256 public minReserveBudget;
@@ -72,13 +75,19 @@ contract AnyCallProxy {
     event AddAdmin(address admin);
     event RemoveAdmin(address admin);
 
-    constructor(address _admin, address _mpc, uint128 _premium) {
+    constructor(
+        address _admin,
+        address _mpc,
+        uint128 _premium,
+        bool _freeTestMode
+    ) {
         if (_admin != address(0)) {
             isAdmin[_admin] = true;
             admins.push(_admin);
         }
         mpc = _mpc;
         _feeData.premium = _premium;
+        freeTestMode = _freeTestMode;
 
         emit TransferMPC(address(0), _mpc, block.timestamp);
         emit UpdatePremium(0, _premium);
@@ -96,16 +105,28 @@ contract AnyCallProxy {
         _;
     }
 
+    /// @dev pausable control function
+    modifier whenNotPaused() {
+        require(!paused); // dev: when not paused
+        _;
+    }
+
     /// @dev Charge an account for execution costs on this chain
     /// @param _from The account to charge for execution costs
     modifier charge(address _from) {
-        require(executionBudget[_from] >= minReserveBudget);
+        require(freeTestMode || executionBudget[_from] >= minReserveBudget);
         uint256 gasUsed = gasleft() + EXECUTION_OVERHEAD;
         _;
-        uint256 totalCost = (gasUsed - gasleft()) * (tx.gasprice + _feeData.premium);
+        if (!freeTestMode) {
+            uint256 totalCost = (gasUsed - gasleft()) * (tx.gasprice + _feeData.premium);
+            executionBudget[_from] -= totalCost;
+            _feeData.accruedFees += uint128(totalCost);
+        }
+    }
 
-        executionBudget[_from] -= totalCost;
-        _feeData.accruedFees += uint128(totalCost);
+    /// @dev set paused flag to pause/unpause functions
+    function setPaused(bool _paused) external onlyAdmin {
+        paused = _paused;
     }
 
     /**
@@ -121,9 +142,9 @@ contract AnyCallProxy {
         bytes calldata _data,
         address _fallback,
         uint256 _toChainID
-    ) external {
+    ) external whenNotPaused {
         require(!blacklist[msg.sender]); // dev: caller is blacklisted
-        require(whitelist[msg.sender][_to][_toChainID]); // dev: request denied
+        require(freeTestMode || whitelist[msg.sender][_to][_toChainID]); // dev: request denied
         require(_fallback == address(0) || _fallback == msg.sender);
 
         emit LogAnyCall(msg.sender, _to, _data, _fallback, _toChainID);
@@ -144,7 +165,7 @@ contract AnyCallProxy {
         bytes calldata _data,
         address _fallback,
         uint256 _fromChainID
-    ) external lock charge(_from) onlyMPC {
+    ) external lock whenNotPaused charge(_from) onlyMPC {
         context = Context({sender: _from, fromChainID: _fromChainID});
         (bool success, bytes memory result) = _to.call(_data);
         context = Context({sender: address(0), fromChainID: 0});
