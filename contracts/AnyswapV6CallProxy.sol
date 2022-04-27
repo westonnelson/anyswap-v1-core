@@ -37,6 +37,12 @@ contract AnyCallV6Proxy {
         uint256 appFlags; // flags of the application
     }
 
+    // Src fee is (baseFees + msg.data.length*feesPerByte)
+    struct SrcFeeConfig {
+        uint256 baseFees;
+        uint256 feesPerByte;
+    }
+
     // Flags constant
     uint256 public constant FLAG_PAY_FEE_ON_SRC = 0x1;
 
@@ -52,8 +58,8 @@ contract AnyCallV6Proxy {
     mapping(string => mapping(address => bool)) public appWhitelist;
     mapping(string => address[]) public appHistoryWhitelist;
     mapping(string => bool) public appBlacklist;
-    mapping(string => uint256) public srcDefaultFees;
-    mapping(string => mapping(uint256 => uint256)) public srcFees;
+    mapping(string => SrcFeeConfig) public srcDefaultFees;
+    mapping(string => mapping(uint256 => SrcFeeConfig)) public srcFeesToChain;
 
     mapping(address => bool) public isAdmin;
     address[] public admins;
@@ -190,8 +196,8 @@ contract AnyCallV6Proxy {
             require(msg.sender == config.app); // dev: app not exist
 
             _flags = config.appFlags;
-            if (_flags & FLAG_PAY_FEE_ON_SRC == FLAG_PAY_FEE_ON_SRC) {
-                uint256 fees = calcSrcFees(_appID, _toChainID);
+            if ((_flags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC) {
+                uint256 fees = calcSrcFees(_appID, _toChainID, _data.length);
                 _paySrcFees(fees);
             }
         }
@@ -379,15 +385,16 @@ contract AnyCallV6Proxy {
         address _admin,
         uint256 _flags,
         address[] calldata _whitelist,
-        uint256 _defaultFees,
-        uint256[] calldata _toChainIDs,
-        uint256[] calldata _fees
+        uint256 _defaultBaseFees,
+        uint256 _defaultFeesPerByte
     ) external onlyMPC {
         require(bytes(_appID).length > 0); // dev: empty appID
         require(_app != address(0)); // dev: zero app address
-        appIdentifier[_app] = _appID;
 
         AppConfig storage config = appConfig[_appID];
+        require(config.app == address(0)); // dev: app exist
+
+        appIdentifier[_app] = _appID;
 
         config.app = _app;
         config.appAdmin = _admin;
@@ -398,8 +405,7 @@ contract AnyCallV6Proxy {
         }
 
         if ((_flags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC) {
-            srcDefaultFees[_appID] = _defaultFees;
-            _setSrcFees(_appID, _toChainIDs, _fees);
+            srcDefaultFees[_appID] = SrcFeeConfig(_defaultBaseFees, _defaultFeesPerByte);
         }
 
         emit SetAppConfig(_appID, _app, _admin, _flags);
@@ -504,43 +510,80 @@ contract AnyCallV6Proxy {
     /// @notice Set fee config
     function setSrcFeeConfig(
         address _app,
-        uint256 _defaultFees,
+        uint256 _defaultBaseFees,
+        uint256 _defaultFeesPerByte,
         uint256[] calldata _toChainIDs,
-        uint256[] calldata _fees
+        uint256[] calldata _baseFees,
+        uint256[] calldata _feesPerByte
     ) external onlyAdmin {
         string memory _appID = appIdentifier[_app];
         AppConfig storage config = appConfig[_appID];
-        require(config.app == _app && _app != address(0)); // dev: app not exist
 
-        srcDefaultFees[_appID] = _defaultFees;
-        _setSrcFees(_appID, _toChainIDs, _fees);
+        require(config.app == _app && _app != address(0)); // dev: app not exist
+        require((config.appFlags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC);
+
+        srcDefaultFees[_appID] = SrcFeeConfig(_defaultBaseFees, _defaultFeesPerByte);
+        _setSrcFeesToChains(_appID, _toChainIDs, _baseFees, _feesPerByte);
     }
 
-    function _setSrcFees(
+    /// @notice Set default src fees
+    function setDefaultSrcFees(
+        address _app,
+        uint256 _defaultBaseFees,
+        uint256 _defaultFeesPerByte
+    ) external onlyAdmin {
+        string memory _appID = appIdentifier[_app];
+        AppConfig storage config = appConfig[_appID];
+
+        require(config.app == _app && _app != address(0)); // dev: app not exist
+        require((config.appFlags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC);
+
+        srcDefaultFees[_appID] = SrcFeeConfig(_defaultBaseFees, _defaultFeesPerByte);
+    }
+
+    /// @notice Set src fees to chains
+    function setSrcFeesToChains(
+        address _app,
+        uint256[] calldata _toChainIDs,
+        uint256[] calldata _baseFees,
+        uint256[] calldata _feesPerByte
+    ) external onlyAdmin {
+        string memory _appID = appIdentifier[_app];
+        AppConfig storage config = appConfig[_appID];
+
+        require(config.app == _app && _app != address(0)); // dev: app not exist
+        require((config.appFlags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC);
+
+        _setSrcFeesToChains(_appID, _toChainIDs, _baseFees, _feesPerByte);
+    }
+
+    function _setSrcFeesToChains(
         string memory _appID,
         uint256[] calldata _toChainIDs,
-        uint256[] calldata _fees
+        uint256[] calldata _baseFees,
+        uint256[] calldata _feesPerByte
     ) internal {
         uint256 length = _toChainIDs.length;
-        require(length == _fees.length);
+        require(length == _baseFees.length && length == _feesPerByte.length);
         if (length == 0) {
             return;
         }
-        mapping(uint256 => uint256) storage _srcFees = srcFees[_appID];
+        mapping(uint256 => SrcFeeConfig) storage _srcFees = srcFeesToChain[_appID];
         for (uint256 i = 0; i < length; i++) {
-            _srcFees[_toChainIDs[i]] = _fees[i];
+            _srcFees[_toChainIDs[i]] = SrcFeeConfig(_baseFees[i], _feesPerByte[i]);
         }
     }
 
     /// @notice Calc fees
     function calcSrcFees(
         string memory _appID,
-        uint256 _toChainID
+        uint256 _toChainID,
+        uint256 _dataLength
     ) public view returns (uint256) {
-        uint256 fees = srcFees[_appID][_toChainID];
-        if (fees == 0) {
-            fees = srcDefaultFees[_appID];
+        SrcFeeConfig memory feesConfig = srcFeesToChain[_appID][_toChainID];
+        if (feesConfig.baseFees == 0 && feesConfig.feesPerByte == 0) {
+            feesConfig = srcDefaultFees[_appID];
         }
-        return fees;
+        return feesConfig.baseFees + _dataLength * feesConfig.feesPerByte;
     }
 }
