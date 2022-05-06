@@ -636,17 +636,10 @@ contract AnyCallV6Proxy {
 
     /// @notice Set default src fees
     function setDefaultSrcFees(
-        address _app,
         uint256[] calldata _toChainIDs,
         uint256[] calldata _baseFees,
         uint256[] calldata _feesPerByte
     ) external onlyAdmin {
-        string memory _appID = appIdentifier[_app];
-        AppConfig storage config = appConfig[_appID];
-
-        require(config.app == _app && _app != address(0)); // dev: app not exist
-        require((config.appFlags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC);
-
         uint256 length = _toChainIDs.length;
         require(length == _baseFees.length && length == _feesPerByte.length);
 
