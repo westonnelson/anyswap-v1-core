@@ -333,13 +333,13 @@ contract AnyCallV6Proxy {
             emit LogAnyExec(_ctx.txhash, _from, _to, _ctx.fromChainID, _ctx.nonce, success, result);
         }
 
-        // Call the fallback on the originating chain with the call information (to, data)
         if (success) {
             execCompleted[uniqID] = true;
         } else if (_fallback == address(0)) {
             retryExecRecords[uniqID] = ExecRecord(_to, _data);
             emit StoreRetryExecRecord(_from, _ctx.fromChainID, _ctx.nonce, _to, _data);
         } else {
+            // Call the fallback on the originating chain with the call information (to, data)
             nonce++;
             emit LogAnyCall(
                 _from,
@@ -355,7 +355,7 @@ contract AnyCallV6Proxy {
 
     // @notice Calc unique ID
     function calcUniqID(address _from, uint256 _fromChainID, uint256 _nonce) public pure returns (bytes32) {
-        return keccak256(abi.encodePacked(_from, _fromChainID, _nonce));
+        return keccak256(abi.encode(_from, _fromChainID, _nonce));
     }
 
     /// @notice Retry stored exec record
