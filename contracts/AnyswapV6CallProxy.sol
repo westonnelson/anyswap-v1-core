@@ -439,19 +439,19 @@ contract AnyCallV6Proxy {
 
     /// @notice Set the premimum for cross chain executions
     /// @param _premium The premium per gas
-    function setPremium(uint128 _premium) external onlyMPC {
+    function setPremium(uint128 _premium) external onlyAdmin {
         emit UpdatePremium(_feeData.premium, _premium);
         _feeData.premium = _premium;
     }
 
     /// @notice Set minimum exection budget for cross chain executions
     /// @param _minBudget The minimum exection budget
-    function setMinReserveBudget(uint128 _minBudget) external onlyMPC {
+    function setMinReserveBudget(uint128 _minBudget) external onlyAdmin {
         minReserveBudget = _minBudget;
     }
 
     /// @notice Set mode
-    function setMode(uint256 _mode) external onlyMPC {
+    function setMode(uint256 _mode) external onlyAdmin {
         mode = _mode;
     }
 
@@ -517,7 +517,7 @@ contract AnyCallV6Proxy {
         address _admin,
         uint256 _flags,
         address[] calldata _whitelist
-    ) external onlyMPC {
+    ) external onlyAdmin {
         require(bytes(_appID).length > 0); // dev: empty appID
         require(_app != address(0)); // dev: zero app address
 
