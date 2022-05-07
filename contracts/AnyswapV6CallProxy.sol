@@ -89,8 +89,15 @@ contract AnyCallV6Proxy {
         uint256 flags;
     }
 
+    // anycall version
+    string constant ANYCALL_VERSION = "v6.0";
+
     // Flags constant
-    uint256 public constant FLAG_PAY_FEE_ON_SRC = 0x1;
+    uint256 public constant FLAG_MERGE_CONFIG_FLAGS = 0x1;
+    uint256 public constant FLAG_PAY_FEE_ON_SRC = 0x1 << 1;
+
+    // App Modes constant
+    uint256 public constant APPMODE_USE_CUSTOM_SRC_FEES = 0x1;
 
     // Modes constant
     uint256 public constant PERMISSIONLESS_MODE = 0x1;
@@ -105,11 +112,13 @@ contract AnyCallV6Proxy {
 
     // key is appID, a unique identifier for each project
     mapping(string => AppConfig) public appConfig;
-    mapping(string => mapping(address => bool)) public appWhitelist;
+    mapping(string => mapping(address => bool)) public appExecWhitelist;
     mapping(string => address[]) public appHistoryWhitelist;
     mapping(string => bool) public appBlacklist;
     mapping(uint256 => SrcFeeConfig) public srcDefaultFees; // key is chainID
     mapping(string => mapping(uint256 => SrcFeeConfig)) public srcCustomFees;
+    mapping(string => uint256) public appDefaultModes;
+    mapping(string => mapping(uint256 => uint256)) public appCustomModes;
 
     mapping(address => bool) public isAdmin;
     address[] public admins;
@@ -172,8 +181,8 @@ contract AnyCallV6Proxy {
     event ApplyMPC(address indexed oldMPC, address indexed newMPC, uint256 timestamp);
     event SetAppConfig(string appID, address indexed app, address indexed appAdmin, uint256 appFlags);
     event UpgradeApp(string appID, address indexed oldApp, address indexed newApp);
-    event StoreRetryExecRecord(address indexed from, uint256 fromChainID, uint256 nonce, address indexed to, bytes data);
-    event DoneRetryExecRecord(address indexed from, uint256 fromChainID, uint256 nonce);
+    event StoreRetryExecRecord(bytes32 indexed txhash, address indexed from, address indexed to, uint256 fromChainID, uint256 nonce, bytes data);
+    event DoneRetryExecRecord(bytes32 indexed txhash, address indexed from, uint256 fromChainID, uint256 nonce);
 
     constructor(
         address _admin,
@@ -219,8 +228,8 @@ contract AnyCallV6Proxy {
         uint256 gasUsed;
 
         // Prepare charge fee on the destination chain
-        if ((mode & FREE_MODE) == 0x0) {
-            if ((_flags & FLAG_PAY_FEE_ON_SRC) == 0x0) {
+        if (!_isSet(mode, FREE_MODE)) {
+            if (!_isSet(_flags, FLAG_PAY_FEE_ON_SRC)) {
                 require(executionBudget[_from] >= minReserveBudget);
                 gasUsed = gasleft() + EXECUTION_OVERHEAD;
             }
@@ -261,31 +270,37 @@ contract AnyCallV6Proxy {
             if the cross chain interaction fails
             for security reason, it must be zero or `msg.sender` address
         @param _toChainID The target chain id to interact with
+        @param _flags The flags of app on the originating chain
     */
     function anyCall(
         address _to,
         bytes calldata _data,
         address _fallback,
-        uint256 _toChainID
-    ) external payable whenNotPaused {
+        uint256 _toChainID,
+        uint256 _flags
+    ) external lock payable whenNotPaused {
         require(_fallback == address(0) || _fallback == msg.sender);
         string memory _appID = appIdentifier[msg.sender];
 
         require(!appBlacklist[_appID]); // dev: app is blacklisted
 
-        if ((mode & PERMISSIONLESS_MODE) == 0x0) {
-            require(appWhitelist[_appID][msg.sender]); // dev: request denied
+        bool _permissionlessMode = _isSet(mode, PERMISSIONLESS_MODE);
+        if (!_permissionlessMode) {
+            require(appExecWhitelist[_appID][msg.sender]); // dev: request denied
         }
 
-        uint256 _flags;
-
-        if ((mode & FREE_MODE) == 0x0) {
+        if (!_isSet(mode, FREE_MODE)) {
             AppConfig storage config = appConfig[_appID];
-            require(msg.sender == config.app); // dev: app not exist
+            require(
+                (_permissionlessMode && config.app == address(0)) ||
+                msg.sender == config.app
+            ); // dev: app not exist
 
-            _flags = config.appFlags;
+            if (_isSet(_flags, FLAG_MERGE_CONFIG_FLAGS) && config.app == msg.sender) {
+                _flags |= config.appFlags;
+            }
 
-            if ((_flags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC) {
+            if (_isSet(_flags, FLAG_PAY_FEE_ON_SRC)) {
                 uint256 fees = _calcSrcFees(_appID, _toChainID, _data.length);
                 _paySrcFees(fees);
             } else if (msg.value > 0) {
@@ -319,11 +334,11 @@ contract AnyCallV6Proxy {
 
         require(!appBlacklist[_appID]); // dev: app is blacklisted
 
-        if ((mode & PERMISSIONLESS_MODE) == 0x0) {
-            require(appWhitelist[_appID][_to]); // dev: request denied
+        if (!_isSet(mode, PERMISSIONLESS_MODE)) {
+            require(appExecWhitelist[_appID][_to]); // dev: request denied
         }
 
-        bytes32 uniqID = calcUniqID(_from, _ctx.fromChainID, _ctx.nonce);
+        bytes32 uniqID = calcUniqID(_ctx.txhash, _from, _ctx.fromChainID, _ctx.nonce);
         require(!execCompleted[uniqID], "exec completed");
 
         bool success;
@@ -337,7 +352,7 @@ contract AnyCallV6Proxy {
             execCompleted[uniqID] = true;
         } else if (_fallback == address(0)) {
             retryExecRecords[uniqID] = ExecRecord(_to, _data);
-            emit StoreRetryExecRecord(_from, _ctx.fromChainID, _ctx.nonce, _to, _data);
+            emit StoreRetryExecRecord(_ctx.txhash, _from, _to, _ctx.fromChainID, _ctx.nonce, _data);
         } else {
             // Call the fallback on the originating chain with the call information (to, data)
             nonce++;
@@ -353,14 +368,18 @@ contract AnyCallV6Proxy {
         }
     }
 
+    function _isSet(uint256 _value, uint256 _testBits) internal pure returns (bool) {
+        return (_value & _testBits) == _testBits;
+    }
+
     // @notice Calc unique ID
-    function calcUniqID(address _from, uint256 _fromChainID, uint256 _nonce) public pure returns (bytes32) {
-        return keccak256(abi.encode(_from, _fromChainID, _nonce));
+    function calcUniqID(bytes32 _txhash, address _from, uint256 _fromChainID, uint256 _nonce) public pure returns (bytes32) {
+        return keccak256(abi.encode(_txhash, _from, _fromChainID, _nonce));
     }
 
     /// @notice Retry stored exec record
-    function retryExec(address _from, uint256 _fromChainID, uint256 _nonce) external {
-        bytes32 uniqID = calcUniqID(_from, _fromChainID, _nonce);
+    function retryExec(bytes32 _txhash, address _from, uint256 _fromChainID, uint256 _nonce) external {
+        bytes32 uniqID = calcUniqID(_txhash, _from, _fromChainID, _nonce);
         require(!execCompleted[uniqID], "exec completed");
 
         ExecRecord storage record = retryExecRecords[uniqID];
@@ -377,7 +396,7 @@ contract AnyCallV6Proxy {
         require(success);
 
         execCompleted[uniqID] = true;
-        emit DoneRetryExecRecord(_from, _fromChainID, _nonce);
+        emit DoneRetryExecRecord(_txhash, _from, _fromChainID, _nonce);
     }
 
     /// @notice Deposit native currency crediting `_account` for execution costs on this chain
@@ -587,7 +606,7 @@ contract AnyCallV6Proxy {
     }
 
     function _setAppWhitelist(string memory _appID, address[] memory _whitelist, bool _flag) internal {
-        mapping(address => bool) storage whitelist = appWhitelist[_appID];
+        mapping(address => bool) storage whitelist = appExecWhitelist[_appID];
         address[] storage historyWhitelist = appHistoryWhitelist[_appID];
         address addr;
         for (uint256 i = 0; i < _whitelist.length; i++) {
@@ -615,7 +634,7 @@ contract AnyCallV6Proxy {
 
     /// @notice Tidy history whitelist to be same with actual whitelist
     function tidyHistoryWhitelist(string memory _appID) external {
-        mapping(address => bool) storage actualWhitelist = appWhitelist[_appID];
+        mapping(address => bool) storage actualWhitelist = appExecWhitelist[_appID];
         address[] storage historyWhitelist = appHistoryWhitelist[_appID];
         uint256 histLength = historyWhitelist.length;
         uint256 popIndex = histLength;
@@ -659,7 +678,7 @@ contract AnyCallV6Proxy {
         AppConfig storage config = appConfig[_appID];
 
         require(config.app == _app && _app != address(0)); // dev: app not exist
-        require((config.appFlags & FLAG_PAY_FEE_ON_SRC) == FLAG_PAY_FEE_ON_SRC);
+        require(_isSet(config.appFlags, FLAG_PAY_FEE_ON_SRC));
 
         uint256 length = _toChainIDs.length;
         require(length == _baseFees.length && length == _feesPerByte.length);
@@ -667,6 +686,27 @@ contract AnyCallV6Proxy {
         mapping(uint256 => SrcFeeConfig) storage _srcFees = srcCustomFees[_appID];
         for (uint256 i = 0; i < length; i++) {
             _srcFees[_toChainIDs[i]] = SrcFeeConfig(_baseFees[i], _feesPerByte[i]);
+        }
+    }
+
+    /// @notice Set app modes
+    function setAppModes(
+        address _app,
+        uint256 _appDefaultMode,
+        uint256[] calldata _toChainIDs,
+        uint256[] calldata _appCustomModes
+    ) external onlyAdmin {
+        string memory _appID = appIdentifier[_app];
+        AppConfig storage config = appConfig[_appID];
+        require(config.app == _app && _app != address(0)); // dev: app not exist
+
+        uint256 length = _toChainIDs.length;
+        require(length == _appCustomModes.length);
+
+        appDefaultModes[_appID] = _appDefaultMode;
+
+        for (uint256 i = 0; i < length; i++) {
+            appCustomModes[_appID][_toChainIDs[i]] = _appCustomModes[i];
         }
     }
 
@@ -689,6 +729,16 @@ contract AnyCallV6Proxy {
         return _calcSrcFees(_appID, _toChainID, _dataLength);
     }
 
+    /// @notice Is use custom src fees
+    function isUseCustomSrcFees(string memory _appID, uint256 _toChainID) public view returns (bool) {
+        uint256 _appMode = appCustomModes[_appID][_toChainID];
+        if (_isSet(_appMode, APPMODE_USE_CUSTOM_SRC_FEES)) {
+            return true;
+        }
+        _appMode = appDefaultModes[_appID];
+        return _isSet(_appMode, APPMODE_USE_CUSTOM_SRC_FEES);
+    }
+
     function _calcSrcFees(
         string memory _appID,
         uint256 _toChainID,
@@ -697,6 +747,10 @@ contract AnyCallV6Proxy {
         SrcFeeConfig memory customFees = srcCustomFees[_appID][_toChainID];
         uint256 customBaseFees = customFees.baseFees;
         uint256 customFeesPerBytes = customFees.feesPerByte;
+
+        if (isUseCustomSrcFees(_appID, _toChainID)) {
+            return customBaseFees + _dataLength * customFeesPerBytes;
+        }
 
         SrcFeeConfig memory defaultFees = srcDefaultFees[_toChainID];
         uint256 defaultBaseFees = defaultFees.baseFees;
