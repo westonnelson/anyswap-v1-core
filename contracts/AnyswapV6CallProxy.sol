@@ -25,7 +25,7 @@ contract AnyCallExecutor {
         creator = msg.sender;
     }
 
-    function execute_norevert(
+    function execute(
         address _to,
         bytes calldata _data,
         address _from,
@@ -36,13 +36,7 @@ contract AnyCallExecutor {
             return (false, "AnyCallExecutor: caller is not the creator");
         }
         context = Context({from: _from, fromChainID: _fromChainID, nonce: _nonce});
-        try IApp(_to).anyExecute(_data) returns (bool succ, bytes memory res) {
-            (success, result) = (succ, res);
-        } catch Error(string memory reason) {
-            result = bytes(reason);
-        } catch (bytes memory reason) {
-            result = reason;
-        }
+        (success, result) = IApp(_to).anyExecute(_data);
         context = Context({from: address(0), fromChainID: 0, nonce: 0});
     }
 }
@@ -190,10 +184,16 @@ contract AnyCallV6Proxy {
         uint128 _premium,
         uint256 _mode
     ) {
+        require(_mpc != address(0), "zero mpc address");
         if (_admin != address(0)) {
             isAdmin[_admin] = true;
             admins.push(_admin);
         }
+        if (_mpc != _admin) {
+            isAdmin[_mpc] = true;
+            admins.push(_mpc);
+        }
+
         mpc = _mpc;
         _feeData.premium = _premium;
         mode = _mode;
@@ -206,19 +206,19 @@ contract AnyCallV6Proxy {
 
     /// @dev Access control function
     modifier onlyMPC() {
-        require(msg.sender == mpc); // dev: only MPC
+        require(msg.sender == mpc, "only MPC");
         _;
     }
 
     /// @dev Access control function
     modifier onlyAdmin() {
-        require(isAdmin[msg.sender]); // dev: only admin
+        require(isAdmin[msg.sender], "only admin");
         _;
     }
 
     /// @dev pausable control function
     modifier whenNotPaused() {
-        require(!paused); // dev: when not paused
+        require(!paused, "paused");
         _;
     }
 
@@ -230,7 +230,7 @@ contract AnyCallV6Proxy {
         // Prepare charge fee on the destination chain
         if (!_isSet(mode, FREE_MODE)) {
             if (!_isSet(_flags, FLAG_PAY_FEE_ON_SRC)) {
-                require(executionBudget[_from] >= minReserveBudget);
+                require(executionBudget[_from] >= minReserveBudget, "less than min budget");
                 gasUsed = gasleft() + EXECUTION_OVERHEAD;
             }
         }
@@ -240,7 +240,9 @@ contract AnyCallV6Proxy {
         // Charge fee on the dest chain
         if (gasUsed > 0) {
             uint256 totalCost = (gasUsed - gasleft()) * (tx.gasprice + _feeData.premium);
-            executionBudget[_from] -= totalCost;
+            uint256 budget = executionBudget[_from];
+            require(budget > totalCost, "no enough budget");
+            executionBudget[_from] = budget - totalCost;
             _feeData.accruedFees += uint128(totalCost);
         }
     }
@@ -251,7 +253,7 @@ contract AnyCallV6Proxy {
     }
 
     function _paySrcFees(uint256 fees) internal {
-        require(msg.value >= fees);
+        require(msg.value >= fees, "no enough src fee");
         if (fees > 0) { // pay fees
             (bool success,) = mpc.call{value: fees}("");
             require(success);
@@ -279,22 +281,23 @@ contract AnyCallV6Proxy {
         uint256 _toChainID,
         uint256 _flags
     ) external lock payable whenNotPaused {
-        require(_fallback == address(0) || _fallback == msg.sender);
+        require(_fallback == address(0) || _fallback == msg.sender, "wrong fallback");
         string memory _appID = appIdentifier[msg.sender];
 
-        require(!appBlacklist[_appID]); // dev: app is blacklisted
+        require(!appBlacklist[_appID], "blacklist");
 
         bool _permissionlessMode = _isSet(mode, PERMISSIONLESS_MODE);
         if (!_permissionlessMode) {
-            require(appExecWhitelist[_appID][msg.sender]); // dev: request denied
+            require(appExecWhitelist[_appID][msg.sender], "no permission");
         }
 
         if (!_isSet(mode, FREE_MODE)) {
             AppConfig storage config = appConfig[_appID];
             require(
                 (_permissionlessMode && config.app == address(0)) ||
-                msg.sender == config.app
-            ); // dev: app not exist
+                msg.sender == config.app,
+                "app not exist"
+            );
 
             if (_isSet(_flags, FLAG_MERGE_CONFIG_FLAGS) && config.app == msg.sender) {
                 _flags |= config.appFlags;
@@ -330,12 +333,12 @@ contract AnyCallV6Proxy {
     ) external lock whenNotPaused charge(_ctx.from, _ctx.flags) onlyMPC {
         address _from = _ctx.from;
 
-        require(_fallback == address(0) || _fallback == _from);
+        require(_fallback == address(0) || _fallback == _from, "wrong fallback");
 
-        require(!appBlacklist[_appID]); // dev: app is blacklisted
+        require(!appBlacklist[_appID], "blacklist");
 
         if (!_isSet(mode, PERMISSIONLESS_MODE)) {
-            require(appExecWhitelist[_appID][_to]); // dev: request denied
+            require(appExecWhitelist[_appID][_to], "no permission");
         }
 
         bytes32 uniqID = calcUniqID(_ctx.txhash, _from, _ctx.fromChainID, _ctx.nonce);
@@ -344,7 +347,13 @@ contract AnyCallV6Proxy {
         bool success;
         {
             bytes memory result;
-            (success, result) = executor.execute_norevert(_to, _data, _from, _ctx.fromChainID, _ctx.nonce);
+            try executor.execute(_to, _data, _from, _ctx.fromChainID, _ctx.nonce) returns (bool succ, bytes memory res) {
+                (success, result) = (succ, res);
+            } catch Error(string memory reason) {
+                result = bytes(reason);
+            } catch (bytes memory reason) {
+                result = reason;
+            }
             emit LogAnyExec(_ctx.txhash, _from, _to, _ctx.fromChainID, _ctx.nonce, success, result);
         }
 
@@ -392,7 +401,7 @@ contract AnyCallV6Proxy {
         record.to = address(0);
         record.data = "";
 
-        (bool success,) = executor.execute_norevert(_to, _data, _from, _fromChainID, _nonce);
+        (bool success,) = executor.execute(_to, _data, _from, _fromChainID, _nonce);
         require(success);
 
         execCompleted[uniqID] = true;
@@ -518,11 +527,11 @@ contract AnyCallV6Proxy {
         uint256 _flags,
         address[] calldata _whitelist
     ) external onlyAdmin {
-        require(bytes(_appID).length > 0); // dev: empty appID
-        require(_app != address(0)); // dev: zero app address
+        require(bytes(_appID).length > 0, "empty appID");
+        require(_app != address(0), "zero app address");
 
         AppConfig storage config = appConfig[_appID];
-        require(config.app == address(0)); // dev: app exist
+        require(config.app == address(0), "app exist");
 
         appIdentifier[_app] = _appID;
 
@@ -552,8 +561,8 @@ contract AnyCallV6Proxy {
         string memory _appID = appIdentifier[_app];
         AppConfig storage config = appConfig[_appID];
 
-        require(config.app == _app && _app != address(0)); // dev: app not exist
-        require(msg.sender == mpc || msg.sender == config.appAdmin);
+        require(config.app == _app && _app != address(0), "app not exist");
+        require(msg.sender == mpc || msg.sender == config.appAdmin, "forbid");
 
         if (_admin != address(0)) {
             config.appAdmin = _admin;
@@ -574,9 +583,9 @@ contract AnyCallV6Proxy {
         string memory _appID = appIdentifier[_oldApp];
         AppConfig storage config = appConfig[_appID];
 
-        require(config.app == _oldApp && _oldApp != address(0)); // dev: app not exist
-        require(msg.sender == mpc || msg.sender == config.appAdmin);
-        require(bytes(appIdentifier[_newApp]).length == 0);
+        require(config.app == _oldApp && _oldApp != address(0), "app not exist");
+        require(msg.sender == mpc || msg.sender == config.appAdmin, "forbid");
+        require(bytes(appIdentifier[_newApp]).length == 0, "new app is inited");
 
         config.app = _newApp;
 
@@ -588,8 +597,8 @@ contract AnyCallV6Proxy {
         string memory _appID = appIdentifier[_app];
         AppConfig storage config = appConfig[_appID];
 
-        require(config.app == _app && _app != address(0)); // dev: app not exist
-        require(msg.sender == mpc || msg.sender == config.appAdmin);
+        require(config.app == _app && _app != address(0), "app not exist");
+        require(msg.sender == mpc || msg.sender == config.appAdmin, "forbid");
 
         _setAppWhitelist(_appID, _whitelist, true);
     }
@@ -599,8 +608,8 @@ contract AnyCallV6Proxy {
         string memory _appID = appIdentifier[_app];
         AppConfig storage config = appConfig[_appID];
 
-        require(config.app == _app && _app != address(0)); // dev: app not exist
-        require(msg.sender == mpc || msg.sender == config.appAdmin);
+        require(config.app == _app && _app != address(0), "app not exist");
+        require(msg.sender == mpc || msg.sender == config.appAdmin, "forbid");
 
         _setAppWhitelist(_appID, _whitelist, false);
     }
@@ -677,8 +686,8 @@ contract AnyCallV6Proxy {
         string memory _appID = appIdentifier[_app];
         AppConfig storage config = appConfig[_appID];
 
-        require(config.app == _app && _app != address(0)); // dev: app not exist
-        require(_isSet(config.appFlags, FLAG_PAY_FEE_ON_SRC));
+        require(config.app == _app && _app != address(0), "app not exist");
+        require(_isSet(config.appFlags, FLAG_PAY_FEE_ON_SRC), "flag not set");
 
         uint256 length = _toChainIDs.length;
         require(length == _baseFees.length && length == _feesPerByte.length);
@@ -698,7 +707,7 @@ contract AnyCallV6Proxy {
     ) external onlyAdmin {
         string memory _appID = appIdentifier[_app];
         AppConfig storage config = appConfig[_appID];
-        require(config.app == _app && _app != address(0)); // dev: app not exist
+        require(config.app == _app && _app != address(0), "app not exist");
 
         uint256 length = _toChainIDs.length;
         require(length == _appCustomModes.length);
