@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: MIT
+
+pragma solidity 0.8.11;
+
+interface IAnycallV6Proxy {
+    function context() external returns (address from, uint256 fromChainID, uint256 nonce);
+
+    function anyCall(
+        address _to,
+        bytes calldata _data,
+        address _fallback,
+        uint256 _toChainID,
+        uint256 _flags
+    ) external payable;
+}
+
+contract Administrable {
+    address public admin;
+    address public pendingAdmin;
+    event LogSetAdmin(address admin);
+    event LogTransferAdmin(address oldadmin, address newadmin);
+    event LogAcceptAdmin(address admin);
+
+    function setAdmin(address admin_) internal {
+        admin = admin_;
+        emit LogSetAdmin(admin_);
+    }
+
+    function transferAdmin(address newAdmin) external onlyAdmin {
+        address oldAdmin = pendingAdmin;
+        pendingAdmin = newAdmin;
+        emit LogTransferAdmin(oldAdmin, newAdmin);
+    }
+
+    function acceptAdmin() external {
+        require(msg.sender == pendingAdmin);
+        admin = pendingAdmin;
+        emit LogAcceptAdmin(admin);
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin);
+        _;
+    }
+}
+
+abstract contract AnyCallApp is Administrable {
+    uint256 public constant FLAG_PAY_FEE_ON_SRC = 0x1 << 1;
+    address public anyCallProxy;
+    address public anyCallExecutor;
+
+    mapping(uint256 => address) public peer;
+
+    modifier onlyExecutor() {
+        require(msg.sender == anyCallExecutor);
+        _;
+    }
+
+    constructor (address anyCallProxy_, address anyCallExecutor_) {
+        anyCallProxy = anyCallProxy_;
+        anyCallExecutor = anyCallExecutor_;
+    }
+
+    function setPeers(uint256[] memory chainIDs, address[] memory  peers) public onlyAdmin {
+        for (uint i = 0; i < chainIDs.length; i++) {
+            peer[chainIDs[i]] = peers[i];
+        }
+    }
+
+    function setAnyCallProxy(address proxy) public onlyAdmin {
+        anyCallProxy = proxy;
+    }
+
+    function setAnyCallExecutor(address executor) public onlyAdmin {
+        anyCallExecutor = executor;
+    }
+
+    function _anyExecute(uint256 fromChainID, bytes calldata data) internal virtual returns (bool success, bytes memory result);
+
+    function _anyFallback(bytes calldata data) internal virtual;
+
+    function _anyCall(address _to, bytes memory _data, address _fallback, uint256 _toChainID) internal {
+        IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(_to, _data, _fallback, _toChainID, FLAG_PAY_FEE_ON_SRC);
+    }
+
+    function anyExecute(bytes calldata data) external onlyExecutor returns (bool success, bytes memory result) {
+        (address callFrom, uint256 fromChainID,) = IAnycallV6Proxy(anyCallProxy).context();
+        require(peer[fromChainID] == callFrom, "call not allowed");
+        _anyExecute(fromChainID, data);
+    }
+
+    function anyFallback(address to, bytes calldata data) external onlyExecutor {
+        _anyFallback(data);
+    }
+}
+
+// interface of ERC20Gateway
+interface IERC721Gateway {
+    function name() external view returns (string memory);
+    function token() external view returns (address);
+    function getPeer(uint256 foreignChainID) external view returns (address);
+    function Swapout(uint256 tokenId, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
+    function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
+}
+
+abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
+    address public token;
+    mapping(uint256 => uint8) public decimals;
+    uint256 public swapoutSeq;
+    string public name;
+
+    constructor (address anyCallProxy, address anyCallExecutor) AnyCallApp(anyCallProxy, anyCallExecutor) {
+        setAdmin(msg.sender);
+    }
+
+    function getPeer(uint256 foreignChainID) external view returns (address) {
+        return peer[foreignChainID];
+    }
+
+    function _swapout(uint256 tokenId, address sender) external virtual returns (bool);
+    function _swapin(uint256 tokenId, address receiver) external virtual returns (bool);
+    function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq) external virtual returns (bool);
+
+    event LogAnySwapOut(uint256 tokenId, address sender, address receiver, uint256 toChainID, uint256 swapoutSeq);
+
+    function setForeignGateway(uint256[] memory chainIDs, address[] memory  peers) external onlyAdmin {
+        for (uint i = 0; i < chainIDs.length; i++) {
+            peer[chainIDs[i]] = peers[i];
+        }
+    }
+
+    function Swapout(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
+        require(this._swapout(tokenId, msg.sender));
+        swapoutSeq++;
+        bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
+        _anyCall(peer[destChainID], data, address(this), destChainID);
+        emit LogAnySwapOut(tokenId, msg.sender, receiver, destChainID, swapoutSeq);
+        return swapoutSeq;
+    }
+
+    function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
+        require(this._swapout(tokenId, msg.sender));
+        swapoutSeq++;tokenId
+        bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
+        _anyCall(peer[destChainID], data, address(0), destChainID);
+        emit LogAnySwapOut(tokenId, msg.sender, receiver, destChainID, swapoutSeq);
+        return swapoutSeq;
+    }
+
+    function _anyExecute(uint256 fromChainID, bytes calldata data) internal override returns (bool success, bytes memory result) {
+        (uint256 tokenId, , address receiver,) = abi.decode(
+            data,
+            (uint256, address, address, uint256)
+        );
+        require(this._swapin(tokenId, receiver));
+    }
+
+    function _anyFallback(bytes calldata data) internal override {
+        (uint256 tokenId, address sender, , uint256 swapoutSeq) = abi.decode(
+            data,
+            (uint256, address, address, uint256)
+        );
+        require(this._swapoutFallback(tokenId, sender, swapoutSeq));
+    }
+}
+
+library Address {
+    function isContract(address account) internal view returns (bool) {
+        bytes32 codehash;
+        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
+        // solhint-disable-next-line no-inline-assembly
+        assembly { codehash := extcodehash(account) }
+        return (codehash != 0x0 && codehash != accountHash);
+    }
+}
