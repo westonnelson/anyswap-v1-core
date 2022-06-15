@@ -140,7 +140,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
 
     function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
         require(this._swapout(tokenId, msg.sender));
-        swapoutSeq++;tokenId
+        swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
         _anyCall(peer[destChainID], data, address(0), destChainID);
         emit LogAnySwapOut(tokenId, msg.sender, receiver, destChainID, swapoutSeq);
