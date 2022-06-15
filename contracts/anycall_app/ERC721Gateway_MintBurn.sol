@@ -117,7 +117,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
         return peer[foreignChainID];
     }
 
-    function _swapout(uint256 tokenId, address sender) internal virtual returns (bool);
+    function _swapout(uint256 tokenId) internal virtual returns (bool);
     function _swapin(uint256 tokenId, address receiver) internal virtual returns (bool);
     function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq) internal virtual returns (bool);
 
@@ -130,7 +130,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     }
 
     function Swapout(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        require(_swapout(tokenId, msg.sender));
+        require(_swapout(tokenId));
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
         _anyCall(peer[destChainID], data, address(this), destChainID);
@@ -139,7 +139,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     }
 
     function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        require(_swapout(tokenId, msg.sender));
+        require(_swapout(tokenId));
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
         _anyCall(peer[destChainID], data, address(0), destChainID);
@@ -171,5 +171,52 @@ library Address {
         // solhint-disable-next-line no-inline-assembly
         assembly { codehash := extcodehash(account) }
         return (codehash != 0x0 && codehash != accountHash);
+    }
+}
+
+interface IMintBurn721 {
+    function mint(address account, uint256 tokenId) external;
+    function burn(uint256 tokenId) external;
+}
+
+interface IGatewayClient {
+    function notifySwapoutFallback(bool refundSuccess, uint256 tokenId, uint256 swapoutSeq) external returns (bool);
+}
+
+contract ERC721Gateway_MintBurn is ERC721Gateway {
+    using Address for address;
+
+    constructor (address anyCallProxy, address anyCallExecutor) ERC721Gateway(anyCallProxy, anyCallExecutor) {}
+
+    function _swapout(uint256 tokenId) internal override virtual returns (bool) {
+        try IMintBurn721(token).burn(tokenId) {
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    function _swapin(uint256 tokenId, address receiver) internal override returns (bool) {
+        try IMintBurn721(token).mint(receiver, tokenId) {
+            return true;
+        } catch {
+            return false;
+        }
+    }
+    
+    function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq) internal override returns (bool result) {
+        try IMintBurn721(token).mint(sender, tokenId) {
+            result = true;
+        } catch {
+            result = false;
+        }
+        if (sender.isContract()) {
+            try IGatewayClient(sender).notifySwapoutFallback(result, tokenId, swapoutSeq) returns (bool) {
+
+            } catch {
+
+            }
+        }
+        return result;
     }
 }
