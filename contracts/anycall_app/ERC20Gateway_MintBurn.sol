@@ -45,7 +45,7 @@ contract Administrable {
 }
 
 abstract contract AnyCallApp is Administrable {
-    uint256 public constant FLAG_PAY_FEE_ON_SRC = 0x1 << 1;
+    uint256 public constant flag = 0;
     address public anyCallProxy;
     address public anyCallExecutor;
 
@@ -80,7 +80,7 @@ abstract contract AnyCallApp is Administrable {
     function _anyFallback(bytes calldata data) internal virtual;
 
     function _anyCall(address _to, bytes memory _data, address _fallback, uint256 _toChainID) internal {
-        IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(_to, _data, _fallback, _toChainID, FLAG_PAY_FEE_ON_SRC);
+        IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(_to, _data, _fallback, _toChainID, flag);
     }
 
     function anyExecute(bytes calldata data) external onlyExecutor returns (bool success, bytes memory result) {
@@ -113,8 +113,9 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
     uint256 public swapoutSeq;
     string public name;
 
-    constructor (address anyCallProxy, address anyCallExecutor) AnyCallApp(anyCallProxy, anyCallExecutor) {
+    constructor (address anyCallProxy, address anyCallExecutor, address token_) AnyCallApp(anyCallProxy, anyCallExecutor) {
         setAdmin(msg.sender);
+        token = token_;
     }
 
     function getPeer(uint256 foreignChainID) external view returns (address) {
@@ -212,7 +213,7 @@ interface IMintBurn {
 contract ERC20Gateway_MintBurn is ERC20Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address anyCallExecutor) ERC20Gateway(anyCallProxy, anyCallExecutor) {}
+    constructor (address anyCallProxy, address anyCallExecutor, address token) ERC20Gateway(anyCallProxy, anyCallExecutor, token) {}
 
     function _swapout(uint256 amount, address sender) internal override returns (bool) {
         try IMintBurn(token).burnFrom(sender, amount) {
