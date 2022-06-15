@@ -117,9 +117,9 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
         return peer[foreignChainID];
     }
 
-    function _swapout(uint256 tokenId, address sender) external virtual returns (bool);
-    function _swapin(uint256 tokenId, address receiver) external virtual returns (bool);
-    function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq) external virtual returns (bool);
+    function _swapout(uint256 tokenId, address sender) internal virtual returns (bool);
+    function _swapin(uint256 tokenId, address receiver) internal virtual returns (bool);
+    function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq) internal virtual returns (bool);
 
     event LogAnySwapOut(uint256 tokenId, address sender, address receiver, uint256 toChainID, uint256 swapoutSeq);
 
@@ -130,7 +130,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     }
 
     function Swapout(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        require(this._swapout(tokenId, msg.sender));
+        require(_swapout(tokenId, msg.sender));
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
         _anyCall(peer[destChainID], data, address(this), destChainID);
@@ -139,7 +139,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     }
 
     function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        require(this._swapout(tokenId, msg.sender));
+        require(_swapout(tokenId, msg.sender));
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq);
         _anyCall(peer[destChainID], data, address(0), destChainID);
@@ -152,7 +152,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
             data,
             (uint256, address, address, uint256)
         );
-        require(this._swapin(tokenId, receiver));
+        require(_swapin(tokenId, receiver));
     }
 
     function _anyFallback(bytes calldata data) internal override {
@@ -160,7 +160,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
             data,
             (uint256, address, address, uint256)
         );
-        require(this._swapoutFallback(tokenId, sender, swapoutSeq));
+        require(_swapoutFallback(tokenId, sender, swapoutSeq));
     }
 }
 
