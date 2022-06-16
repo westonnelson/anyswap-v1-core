@@ -3,8 +3,6 @@
 pragma solidity 0.8.11;
 
 interface IAnycallV6Proxy {
-    function context() external returns (address from, uint256 fromChainID, uint256 nonce);
-
     function anyCall(
         address _to,
         bytes calldata _data,
@@ -12,6 +10,10 @@ interface IAnycallV6Proxy {
         uint256 _toChainID,
         uint256 _flags
     ) external payable;
+}
+
+interface IExecutor {
+    function context() external returns (address from, uint256 fromChainID, uint256 nonce);
 }
 
 contract Administrable {
@@ -84,7 +86,7 @@ abstract contract AnyCallApp is Administrable {
     }
 
     function anyExecute(bytes calldata data) external onlyExecutor returns (bool success, bytes memory result) {
-        (address callFrom, uint256 fromChainID,) = IAnycallV6Proxy(anyCallProxy).context();
+        (address callFrom, uint256 fromChainID,) = IExecutor(anyCallExecutor).context();
         require(peer[fromChainID] == callFrom, "call not allowed");
         _anyExecute(fromChainID, data);
     }
