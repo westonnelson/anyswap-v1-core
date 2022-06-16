@@ -240,11 +240,11 @@ contract ERC721 is IERC721 {
 contract SimpleMintBurnERC721 is ERC721, IMintBurn721 {
     constructor(string memory name_, string memory symbol_) ERC721(name_, symbol_) {}
 
-    function mint(address account, uint256 tokenId) external {
+    function mint(address account, uint256 tokenId) override external {
         _safeMint(account, tokenId);
     }
 
-    function burn(uint256 tokenId) external {
+    function burn(uint256 tokenId) override external {
         _burn(tokenId);
     }
 }
