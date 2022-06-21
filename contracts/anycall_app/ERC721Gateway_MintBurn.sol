@@ -180,6 +180,7 @@ library Address {
 }
 
 interface IMintBurn721 {
+    function ownerOf(uint256 tokenId) external view returns (address owner);
     function mint(address account, uint256 tokenId) external;
     function burn(uint256 tokenId) external;
 }
@@ -194,6 +195,7 @@ contract ERC721Gateway_MintBurn is ERC721Gateway {
     constructor (address anyCallProxy, address anyCallExecutor, address token) ERC721Gateway(anyCallProxy, anyCallExecutor, token) {}
 
     function _swapout(uint256 tokenId) internal override virtual returns (bool, bytes memory) {
+        require(IMintBurn721(token).ownerOf(tokenId) == msg.sender, "not allowed");
         try IMintBurn721(token).burn(tokenId) {
             return (true, "");
         } catch {

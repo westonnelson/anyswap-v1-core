@@ -120,7 +120,7 @@ abstract contract ERC1155Gateway is IERC1155Gateway, AnyCallApp {
         return peer[foreignChainID];
     }
 
-    function _swapout(uint256 tokenId, uint256 amount) internal virtual returns (bool, bytes calldata);
+    function _swapout(address sender, uint256 tokenId, uint256 amount) internal virtual returns (bool, bytes calldata);
     function _swapin(uint256 tokenId, uint256 amount, address receiver, bytes memory extraMsg) internal virtual returns (bool);
     function _swapoutFallback(uint256 tokenId, uint256 amount, address sender, uint256 swapoutSeq, bytes memory extraMsg) internal virtual returns (bool);
 
@@ -133,7 +133,7 @@ abstract contract ERC1155Gateway is IERC1155Gateway, AnyCallApp {
     }
 
     function Swapout(uint256 tokenId, uint256 amount, address receiver, uint256 destChainID) external payable returns (uint256) {
-        (bool ok, bytes calldata extraMsg) = _swapout(tokenId, amount);
+        (bool ok, bytes calldata extraMsg) = _swapout(msg.sender, tokenId, amount);
         require(ok);
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, amount, msg.sender, receiver, swapoutSeq, extraMsg);
@@ -143,7 +143,7 @@ abstract contract ERC1155Gateway is IERC1155Gateway, AnyCallApp {
     }
 
     function Swapout_no_fallback(uint256 tokenId, uint256 amount, address receiver, uint256 destChainID) external payable returns (uint256) {
-        (bool ok, bytes calldata extraMsg) = _swapout(tokenId, amount);
+        (bool ok, bytes calldata extraMsg) = _swapout(msg.sender, tokenId, amount);
         require(ok);
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, amount, msg.sender, receiver, swapoutSeq, extraMsg);
@@ -182,8 +182,8 @@ library Address {
 interface IMintBurn1155 {
     function mint(address account, uint256 tokenId, uint256 amount) external;
     // function mint(address account, uint256 tokenId, uint256 amount, bytes memory data) external;
-    function burn(uint256 tokenId, uint256 amount) external;
-    // function burn(uint256 tokenId, uint256 amount, bytes memory data) external;
+    function burn(address account, uint256 tokenId, uint256 amount) external;
+    // function burn(address account, uint256 tokenId, uint256 amount, bytes memory data) external;
 }
 
 interface IGatewayClient {
@@ -195,8 +195,8 @@ contract ERC1155Gateway_MintBurn is ERC1155Gateway {
 
     constructor (address anyCallProxy, address anyCallExecutor, address token) ERC1155Gateway(anyCallProxy, anyCallExecutor, token) {}
 
-    function _swapout(uint256 tokenId, uint256 amount) internal override virtual returns (bool, bytes memory) {
-        try IMintBurn1155(token).burn(tokenId, amount) {
+    function _swapout(address sender, uint256 tokenId, uint256 amount) internal override virtual returns (bool, bytes memory) {
+        try IMintBurn1155(token).burn(sender, tokenId, amount) {
             return (true, "");
         } catch {
             return (false, "");
