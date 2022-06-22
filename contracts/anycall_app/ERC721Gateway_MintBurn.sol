@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.11;
+pragma solidity ^0.8.1;
 
 interface IAnycallV6Proxy {
     function anyCall(
@@ -10,6 +10,8 @@ interface IAnycallV6Proxy {
         uint256 _toChainID,
         uint256 _flags
     ) external payable;
+
+    function executor() external view returns (address);
 }
 
 interface IExecutor {
@@ -37,6 +39,7 @@ contract Administrable {
     function acceptAdmin() external {
         require(msg.sender == pendingAdmin);
         admin = pendingAdmin;
+        pendingAdmin = address(0);
         emit LogAcceptAdmin(admin);
     }
 
@@ -47,20 +50,19 @@ contract Administrable {
 }
 
 abstract contract AnyCallApp is Administrable {
-    uint256 public constant flag = 0;
+    uint256 public flag; // 0: pay on dest chain, 2: pay on source chain
     address public anyCallProxy;
-    address public anyCallExecutor;
 
     mapping(uint256 => address) public peer;
 
     modifier onlyExecutor() {
-        require(msg.sender == anyCallExecutor);
+        require(msg.sender == IAnycallV6Proxy(anyCallProxy).executor());
         _;
     }
 
-    constructor (address anyCallProxy_, address anyCallExecutor_) {
+    constructor (address anyCallProxy_, uint256 flag_) {
         anyCallProxy = anyCallProxy_;
-        anyCallExecutor = anyCallExecutor_;
+        flag = flag_;
     }
 
     function setPeers(uint256[] memory chainIDs, address[] memory  peers) public onlyAdmin {
@@ -73,25 +75,27 @@ abstract contract AnyCallApp is Administrable {
         anyCallProxy = proxy;
     }
 
-    function setAnyCallExecutor(address executor) public onlyAdmin {
-        anyCallExecutor = executor;
-    }
-
     function _anyExecute(uint256 fromChainID, bytes calldata data) internal virtual returns (bool success, bytes memory result);
 
     function _anyFallback(bytes calldata data) internal virtual;
 
     function _anyCall(address _to, bytes memory _data, address _fallback, uint256 _toChainID) internal {
-        IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(_to, _data, _fallback, _toChainID, flag);
+        if (flag == 2) {
+            IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(_to, _data, _fallback, _toChainID, flag);
+        } else {
+            IAnycallV6Proxy(anyCallProxy).anyCall(_to, _data, _fallback, _toChainID, flag);
+        }
     }
 
     function anyExecute(bytes calldata data) external onlyExecutor returns (bool success, bytes memory result) {
-        (address callFrom, uint256 fromChainID,) = IExecutor(anyCallExecutor).context();
+        (address callFrom, uint256 fromChainID,) = IExecutor(IAnycallV6Proxy(anyCallProxy).executor()).context();
         require(peer[fromChainID] == callFrom, "call not allowed");
         _anyExecute(fromChainID, data);
     }
 
     function anyFallback(address to, bytes calldata data) external onlyExecutor {
+        (address callFrom, ,) = IExecutor(IAnycallV6Proxy(anyCallProxy).executor()).context();
+        require(address(this) == callFrom, "call not allowed");
         _anyFallback(data);
     }
 }
@@ -111,7 +115,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     uint256 public swapoutSeq;
     string public name;
 
-    constructor (address anyCallProxy, address anyCallExecutor, address token_) AnyCallApp(anyCallProxy, anyCallExecutor) {
+    constructor (address anyCallProxy, uint256 flag, address token_) AnyCallApp(anyCallProxy, flag) {
         setAdmin(msg.sender);
         token = token_;
     }
@@ -120,7 +124,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
         return peer[foreignChainID];
     }
 
-    function _swapout(uint256 tokenId) internal virtual returns (bool, bytes calldata);
+    function _swapout(uint256 tokenId) internal virtual returns (bool, bytes memory);
     function _swapin(uint256 tokenId, address receiver, bytes memory extraMsg) internal virtual returns (bool);
     function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq, bytes memory extraMsg) internal virtual returns (bool);
 
@@ -133,7 +137,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     }
 
     function Swapout(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        (bool ok, bytes calldata extraMsg) = _swapout(tokenId);
+        (bool ok, bytes memory extraMsg) = _swapout(tokenId);
         require(ok);
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq, extraMsg);
@@ -143,7 +147,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
     }
 
     function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        (bool ok, bytes calldata extraMsg) = _swapout(tokenId);
+        (bool ok, bytes memory extraMsg) = _swapout(tokenId);
         require(ok);
         swapoutSeq++;
         bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq, extraMsg);
@@ -171,11 +175,7 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
 
 library Address {
     function isContract(address account) internal view returns (bool) {
-        bytes32 codehash;
-        bytes32 accountHash = 0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470;
-        // solhint-disable-next-line no-inline-assembly
-        assembly { codehash := extcodehash(account) }
-        return (codehash != 0x0 && codehash != accountHash);
+        return account.code.length > 0;
     }
 }
 
@@ -192,7 +192,7 @@ interface IGatewayClient {
 contract ERC721Gateway_MintBurn is ERC721Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address anyCallExecutor, address token) ERC721Gateway(anyCallProxy, anyCallExecutor, token) {}
+    constructor (address anyCallProxy, uint256 flag, address token) ERC721Gateway(anyCallProxy, flag, token) {}
 
     function _swapout(uint256 tokenId) internal override virtual returns (bool, bytes memory) {
         require(IMintBurn721(token).ownerOf(tokenId) == msg.sender, "not allowed");
@@ -218,11 +218,8 @@ contract ERC721Gateway_MintBurn is ERC721Gateway {
             result = false;
         }
         if (sender.isContract()) {
-            try IGatewayClient(sender).notifySwapoutFallback(result, tokenId, swapoutSeq) returns (bool) {
-
-            } catch {
-
-            }
+            bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, tokenId, swapoutSeq);
+            (result,) = sender.call(_data);
         }
         return result;
     }

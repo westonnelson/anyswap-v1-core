@@ -40,6 +40,7 @@ var token_ftm;
 var token_rkb;
 var gateway_ftm;
 var gateway_rkb;
+var flag = 0;
 
 async function deployFTMToken() {
     console.log("deploying fantom testnet erc721 token");
@@ -54,14 +55,14 @@ async function deployRinkebyToken() {
 }
 
 async function deployFTMGateway() {
-    console.log("deploying fantom testnet gateway" + " === args === " + anycall_ftm_addr + " " + executor_ftm_addr + " " + token_ftm.options.address);
-    gateway_ftm = await deploy(fantomTestnet, "ERC721Gateway_MintBurn", [anycall_ftm_addr, executor_ftm_addr, token_ftm.options.address], 1300000);
+    console.log("deploying fantom testnet gateway" + " === args === " + anycall_ftm_addr + " " + flag + " " + token_ftm.options.address);
+    gateway_ftm = await deploy(fantomTestnet, "ERC721Gateway_MintBurn", [anycall_ftm_addr, flag, token_ftm.options.address], 1300000);
     console.log("deployed fantom gateway" + "===" + gateway_ftm.options.address);
 }
 
 async function deployRKBGateway() {
-    console.log("deploying rinkeby testnet gateway" + " === args === " + anycall_rkb_addr + " " + executor_rkb_addr + " " + token_rkb.options.address);
-    gateway_rkb = await deploy(rinkeby, "ERC721Gateway_MintBurn", [anycall_rkb_addr, executor_rkb_addr, token_rkb.options.address], 1300000);
+    console.log("deploying rinkeby testnet gateway" + " === args === " + anycall_rkb_addr + " " + flag + " " + token_rkb.options.address);
+    gateway_rkb = await deploy(rinkeby, "ERC721Gateway_MintBurn", [anycall_rkb_addr, flag, token_rkb.options.address], 1300000);
     console.log("deployed rinkeby gateway" + "===" + gateway_rkb.options.address);
 }
 

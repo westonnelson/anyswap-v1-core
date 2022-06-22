@@ -7,9 +7,9 @@
 				"type": "address"
 			},
 			{
-				"internalType": "address",
-				"name": "anyCallExecutor",
-				"type": "address"
+				"internalType": "uint256",
+				"name": "flag",
+				"type": "uint256"
 			},
 			{
 				"internalType": "address",
@@ -182,19 +182,6 @@
 	},
 	{
 		"inputs": [],
-		"name": "anyCallExecutor",
-		"outputs": [
-			{
-				"internalType": "address",
-				"name": "",
-				"type": "address"
-			}
-		],
-		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [],
 		"name": "anyCallProxy",
 		"outputs": [
 			{
@@ -342,19 +329,6 @@
 			}
 		],
 		"stateMutability": "view",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "executor",
-				"type": "address"
-			}
-		],
-		"name": "setAnyCallExecutor",
-		"outputs": [],
-		"stateMutability": "nonpayable",
 		"type": "function"
 	},
 	{
