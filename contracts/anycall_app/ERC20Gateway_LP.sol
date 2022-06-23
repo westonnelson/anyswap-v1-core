@@ -227,7 +227,7 @@ contract ERC20Gateway_LP is ERC20Gateway {
         bool result = ITransfer(token).transferFrom(address(this), sender, amount);
         if (sender.isContract()) {
             bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, amount, swapoutSeq);
-            (result,) = sender.call(_data);
+            sender.call(_data);
         }
         return result;
     }

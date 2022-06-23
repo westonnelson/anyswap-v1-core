@@ -228,7 +228,7 @@ contract ERC20Gateway_for_AnyERC20_legacy is ERC20Gateway {
         bool result = AnyERC20_legacy(token).Swapin(bytes32(bytes("")), sender, amount);
         if (sender.isContract()) {
             bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, amount, swapoutSeq);
-            (result,) = sender.call(_data);
+            sender.call(_data);
         }
         return result;
     }

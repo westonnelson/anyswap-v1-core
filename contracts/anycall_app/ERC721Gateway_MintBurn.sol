@@ -219,7 +219,7 @@ contract ERC721Gateway_MintBurn is ERC721Gateway {
         }
         if (sender.isContract()) {
             bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, tokenId, swapoutSeq);
-            (result,) = sender.call(_data);
+            sender.call(_data);
         }
         return result;
     }

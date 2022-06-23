@@ -219,7 +219,7 @@ contract ERC1155Gateway_MintBurn is ERC1155Gateway {
         }
         if (sender.isContract()) {
             bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, tokenId, amount, swapoutSeq);
-            (result,) = sender.call(_data);
+            sender.call(_data);
         }
         return result;
     }

@@ -243,7 +243,7 @@ contract ERC20Gateway_MintBurn is ERC20Gateway {
         }
         if (sender.isContract()) {
             bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, amount, swapoutSeq);
-            (result,) = sender.call(_data);
+            sender.call(_data);
         }
         return result;
     }
