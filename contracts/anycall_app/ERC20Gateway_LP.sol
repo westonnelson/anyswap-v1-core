@@ -71,6 +71,10 @@ abstract contract AnyCallApp is Administrable {
         }
     }
 
+    function getPeer(uint256 foreignChainID) external view returns (address) {
+        return peer[foreignChainID];
+    }
+
     function setAnyCallProxy(address proxy) public onlyAdmin {
         anyCallProxy = proxy;
     }
@@ -104,7 +108,6 @@ abstract contract AnyCallApp is Administrable {
 interface IERC20Gateway {
     function name() external view returns (string memory);
     function token() external view returns (address);
-    function getPeer(uint256 foreignChainID) external view returns (address);
     function Swapout(uint256 amount, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
     function Swapout_no_fallback(uint256 amount, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
 }
@@ -119,13 +122,10 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
     uint256 public swapoutSeq;
     string public name;
 
-    constructor (address anyCallProxy, uint256 flag, address token_) AnyCallApp(anyCallProxy, flag) {
+    constructor (address anyCallProxy, uint256 flag, address token_, string memory name_) AnyCallApp(anyCallProxy, flag) {
+        name = name_;
         setAdmin(msg.sender);
         token = token_;
-    }
-
-    function getPeer(uint256 foreignChainID) external view returns (address) {
-        return peer[foreignChainID];
     }
 
     function _swapout(uint256 amount, address sender) internal virtual returns (bool);
@@ -134,10 +134,9 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
 
     event LogAnySwapOut(uint256 amount, address sender, address receiver, uint256 toChainID, uint256 swapoutSeq);
 
-    function setForeignGateway(uint256[] memory chainIDs, address[] memory  peers, uint8[] memory decimals) external onlyAdmin {
+    function setDecimals(uint256[] memory chainIDs, uint8[] memory decimals_) external onlyAdmin {
         for (uint i = 0; i < chainIDs.length; i++) {
-            peer[chainIDs[i]] = peers[i];
-            decimals[chainIDs[i]] = decimals[i];
+            decimals[chainIDs[i]] = decimals_[i];
         }
     }
 

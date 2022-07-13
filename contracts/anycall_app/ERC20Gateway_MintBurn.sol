@@ -17,7 +17,13 @@ interface IAnycallV6Proxy {
 }
 
 interface IExecutor {
-    function context() external returns (address from, uint256 fromChainID, uint256 nonce);
+    function context()
+        external
+        returns (
+            address from,
+            uint256 fromChainID,
+            uint256 nonce
+        );
 }
 
 contract Administrable {
@@ -62,41 +68,79 @@ abstract contract AnyCallApp is Administrable {
         _;
     }
 
-    constructor (address anyCallProxy_, uint256 flag_) {
+    constructor(address anyCallProxy_, uint256 flag_) {
         anyCallProxy = anyCallProxy_;
         flag = flag_;
     }
 
-    function setPeers(uint256[] memory chainIDs, address[] memory  peers) public onlyAdmin {
-        for (uint i = 0; i < chainIDs.length; i++) {
+    function setPeers(uint256[] memory chainIDs, address[] memory peers)
+        public
+        onlyAdmin
+    {
+        for (uint256 i = 0; i < chainIDs.length; i++) {
             peer[chainIDs[i]] = peers[i];
         }
+    }
+
+    function getPeer(uint256 foreignChainID) external view returns (address) {
+        return peer[foreignChainID];
     }
 
     function setAnyCallProxy(address proxy) public onlyAdmin {
         anyCallProxy = proxy;
     }
 
-    function _anyExecute(uint256 fromChainID, bytes calldata data) internal virtual returns (bool success, bytes memory result);
+    function _anyExecute(uint256 fromChainID, bytes calldata data)
+        internal
+        virtual
+        returns (bool success, bytes memory result);
 
     function _anyFallback(bytes calldata data) internal virtual;
 
-    function _anyCall(address _to, bytes memory _data, address _fallback, uint256 _toChainID) internal {
+    function _anyCall(
+        address _to,
+        bytes memory _data,
+        address _fallback,
+        uint256 _toChainID
+    ) internal {
         if (flag == 2) {
-            IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(_to, _data, _fallback, _toChainID, flag);
+            IAnycallV6Proxy(anyCallProxy).anyCall{value: msg.value}(
+                _to,
+                _data,
+                _fallback,
+                _toChainID,
+                flag
+            );
         } else {
-            IAnycallV6Proxy(anyCallProxy).anyCall(_to, _data, _fallback, _toChainID, flag);
+            IAnycallV6Proxy(anyCallProxy).anyCall(
+                _to,
+                _data,
+                _fallback,
+                _toChainID,
+                flag
+            );
         }
     }
 
-    function anyExecute(bytes calldata data) external onlyExecutor returns (bool success, bytes memory result) {
-        (address callFrom, uint256 fromChainID,) = IExecutor(IAnycallV6Proxy(anyCallProxy).executor()).context();
+    function anyExecute(bytes calldata data)
+        external
+        onlyExecutor
+        returns (bool success, bytes memory result)
+    {
+        (address callFrom, uint256 fromChainID, ) = IExecutor(
+            IAnycallV6Proxy(anyCallProxy).executor()
+        ).context();
         require(peer[fromChainID] == callFrom, "call not allowed");
         _anyExecute(fromChainID, data);
     }
 
-    function anyFallback(address to, bytes calldata data) external onlyExecutor {
-        (address callFrom, ,) = IExecutor(IAnycallV6Proxy(anyCallProxy).executor()).context();
+    function anyFallback(address to, bytes calldata data)
+        external
+        onlyExecutor
+    {
+        (address callFrom, , ) = IExecutor(
+            IAnycallV6Proxy(anyCallProxy).executor()
+        ).context();
         require(address(this) == callFrom, "call not allowed");
         _anyFallback(data);
     }
@@ -105,10 +149,20 @@ abstract contract AnyCallApp is Administrable {
 // interface of ERC20Gateway
 interface IERC20Gateway {
     function name() external view returns (string memory);
+
     function token() external view returns (address);
-    function getPeer(uint256 foreignChainID) external view returns (address);
-    function Swapout(uint256 amount, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
-    function Swapout_no_fallback(uint256 amount, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
+
+    function Swapout(
+        uint256 amount,
+        address receiver,
+        uint256 toChainID
+    ) external payable returns (uint256 swapoutSeq);
+
+    function Swapout_no_fallback(
+        uint256 amount,
+        address receiver,
+        uint256 toChainID
+    ) external payable returns (uint256 swapoutSeq);
 }
 
 interface IDecimal {
@@ -121,33 +175,63 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
     uint256 public swapoutSeq;
     string public name;
 
-    constructor (address anyCallProxy, uint256 flag, address token_) AnyCallApp(anyCallProxy, flag) {
+    constructor(
+        address anyCallProxy,
+        uint256 flag,
+        address token_,
+        string memory name_
+    ) AnyCallApp(anyCallProxy, flag) {
+        name = name_;
         setAdmin(msg.sender);
         token = token_;
     }
 
-    function getPeer(uint256 foreignChainID) external view returns (address) {
-        return peer[foreignChainID];
-    }
+    function _swapout(uint256 amount, address sender)
+        internal
+        virtual
+        returns (bool);
 
-    function _swapout(uint256 amount, address sender) internal virtual returns (bool);
-    function _swapin(uint256 amount, address receiver) internal virtual returns (bool);
-    function _swapoutFallback(uint256 amount, address sender, uint256 swapoutSeq) internal virtual returns (bool);
+    function _swapin(uint256 amount, address receiver)
+        internal
+        virtual
+        returns (bool);
 
-    event LogAnySwapOut(uint256 amount, address sender, address receiver, uint256 toChainID, uint256 swapoutSeq);
+    function _swapoutFallback(
+        uint256 amount,
+        address sender,
+        uint256 swapoutSeq
+    ) internal virtual returns (bool);
 
-    function setForeignGateway(uint256[] memory chainIDs, address[] memory  peers, uint8[] memory decimals) external onlyAdmin {
-        for (uint i = 0; i < chainIDs.length; i++) {
-            peer[chainIDs[i]] = peers[i];
-            decimals[chainIDs[i]] = decimals[i];
+    event LogAnySwapOut(
+        uint256 amount,
+        address sender,
+        address receiver,
+        uint256 toChainID,
+        uint256 swapoutSeq
+    );
+
+    function setDecimals(
+        uint256[] memory chainIDs,
+        uint8[] memory decimals_
+    ) external onlyAdmin {
+        for (uint256 i = 0; i < chainIDs.length; i++) {
+            decimals[chainIDs[i]] = decimals_[i];
         }
     }
 
-    function decimal(uint256 chainID) external view returns(uint8) {
-        return (decimals[chainID] > 0 ? decimals[chainID] : IDecimal(token).decimals());
+    function decimal(uint256 chainID) external view returns (uint8) {
+        return (
+            decimals[chainID] > 0
+                ? decimals[chainID]
+                : IDecimal(token).decimals()
+        );
     }
 
-    function convertDecimal(uint256 fromChain, uint256 amount) public view returns (uint256) {
+    function convertDecimal(uint256 fromChain, uint256 amount)
+        public
+        view
+        returns (uint256)
+    {
         uint8 d_0 = this.decimal(fromChain);
         uint8 d_1 = IDecimal(token).decimals();
         if (d_0 > d_1) {
@@ -162,26 +246,60 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
         return amount;
     }
 
-    function Swapout(uint256 amount, address receiver, uint256 destChainID) external payable returns (uint256) {
+    function Swapout(
+        uint256 amount,
+        address receiver,
+        uint256 destChainID
+    ) external payable returns (uint256) {
         require(_swapout(amount, msg.sender));
         swapoutSeq++;
-        bytes memory data = abi.encode(amount, msg.sender, receiver, swapoutSeq);
+        bytes memory data = abi.encode(
+            amount,
+            msg.sender,
+            receiver,
+            swapoutSeq
+        );
         _anyCall(peer[destChainID], data, address(this), destChainID);
-        emit LogAnySwapOut(amount, msg.sender, receiver, destChainID, swapoutSeq);
+        emit LogAnySwapOut(
+            amount,
+            msg.sender,
+            receiver,
+            destChainID,
+            swapoutSeq
+        );
         return swapoutSeq;
     }
 
-    function Swapout_no_fallback(uint256 amount, address receiver, uint256 destChainID) external payable returns (uint256) {
+    function Swapout_no_fallback(
+        uint256 amount,
+        address receiver,
+        uint256 destChainID
+    ) external payable returns (uint256) {
         require(_swapout(amount, msg.sender));
         swapoutSeq++;
-        bytes memory data = abi.encode(amount, msg.sender, receiver, swapoutSeq);
+        bytes memory data = abi.encode(
+            amount,
+            msg.sender,
+            receiver,
+            swapoutSeq
+        );
         _anyCall(peer[destChainID], data, address(0), destChainID);
-        emit LogAnySwapOut(amount, msg.sender, receiver, destChainID, swapoutSeq);
+        emit LogAnySwapOut(
+            amount,
+            msg.sender,
+            receiver,
+            destChainID,
+            swapoutSeq
+        );
         return swapoutSeq;
     }
 
-    function _anyExecute(uint256 fromChainID, bytes calldata data) internal override returns (bool success, bytes memory result) {
-        (uint256 amount, , address receiver,) = abi.decode(
+    function _anyExecute(uint256 fromChainID, bytes calldata data)
+        internal
+        override
+        returns (bool success, bytes memory result)
+    {
+        (uint256 amount, , address receiver, ) = abi.decode(
             data,
             (uint256, address, address, uint256)
         );
@@ -205,11 +323,16 @@ library Address {
 }
 
 interface IGatewayClient {
-    function notifySwapoutFallback(bool refundSuccess, uint256 amount, uint256 swapoutSeq) external returns (bool);
+    function notifySwapoutFallback(
+        bool refundSuccess,
+        uint256 amount,
+        uint256 swapoutSeq
+    ) external returns (bool);
 }
 
 interface IMintBurn {
     function mint(address account, uint256 amount) external;
+
     function burnFrom(address account, uint256 amount) external;
     // function burn(address account, uint256 amount) external;
 }
@@ -217,9 +340,17 @@ interface IMintBurn {
 contract ERC20Gateway_MintBurn is ERC20Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, uint256 flag, address token) ERC20Gateway(anyCallProxy, flag, token) {}
+    constructor(
+        address anyCallProxy,
+        uint256 flag,
+        address token
+    ) ERC20Gateway(anyCallProxy, flag, token) {}
 
-    function _swapout(uint256 amount, address sender) internal override returns (bool) {
+    function _swapout(uint256 amount, address sender)
+        internal
+        override
+        returns (bool)
+    {
         try IMintBurn(token).burnFrom(sender, amount) {
             return true;
         } catch {
@@ -227,22 +358,35 @@ contract ERC20Gateway_MintBurn is ERC20Gateway {
         }
     }
 
-    function _swapin(uint256 amount, address receiver) internal override returns (bool) {
+    function _swapin(uint256 amount, address receiver)
+        internal
+        override
+        returns (bool)
+    {
         try IMintBurn(token).mint(receiver, amount) {
             return true;
         } catch {
             return false;
         }
     }
-    
-    function _swapoutFallback(uint256 amount, address sender, uint256 swapoutSeq) internal override returns (bool result) {
+
+    function _swapoutFallback(
+        uint256 amount,
+        address sender,
+        uint256 swapoutSeq
+    ) internal override returns (bool result) {
         try IMintBurn(token).mint(sender, amount) {
             result = true;
         } catch {
             result = false;
         }
         if (sender.isContract()) {
-            bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, amount, swapoutSeq);
+            bytes memory _data = abi.encodeWithSelector(
+                IGatewayClient.notifySwapoutFallback.selector,
+                result,
+                amount,
+                swapoutSeq
+            );
             sender.call(_data);
         }
         return result;
