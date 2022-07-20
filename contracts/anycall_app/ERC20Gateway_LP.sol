@@ -106,7 +106,6 @@ abstract contract AnyCallApp is Administrable {
 
 // interface of ERC20Gateway
 interface IERC20Gateway {
-    function name() external view returns (string memory);
     function token() external view returns (address);
     function Swapout(uint256 amount, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
     function Swapout_no_fallback(uint256 amount, address receiver, uint256 toChainID) external payable returns (uint256 swapoutSeq);
@@ -120,10 +119,8 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
     address public token;
     mapping(uint256 => uint8) public decimals;
     uint256 public swapoutSeq;
-    string public name;
 
-    constructor (address anyCallProxy, uint256 flag, address token_, string memory name_) AnyCallApp(anyCallProxy, flag) {
-        name = name_;
+    constructor (address anyCallProxy, uint256 flag, address token_) AnyCallApp(anyCallProxy, flag) {
         setAdmin(msg.sender);
         token = token_;
     }
