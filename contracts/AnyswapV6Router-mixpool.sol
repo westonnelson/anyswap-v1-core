@@ -467,103 +467,86 @@ abstract contract MPCManageable {
 pragma solidity ^0.8.10;
 
 
-interface IwNATIVE {
-    function deposit() external payable;
-    function transfer(address to, uint256 value) external returns (bool);
-    function withdraw(uint256) external;
-}
-
 interface IAnyswapMixPool {
+    function tokenInfo(address token) external view returns (bool authed, bool canMint);
     function mint(address token, address to, uint256 amount) external returns (bool);
     function burn(address token, address from, uint256 amount) external returns (bool);
-    function underlyingInfo(address token) external view returns (address, bool);
-    function deposit(address token, uint256 amount, address to) external returns (uint256);
-    function withdraw(address token, uint256 amount, address to) external returns (uint256);
+    function withdrawVault(address token, uint amount, address to) external returns (uint256);
+    function balanceOf(address token, address account) external view returns (uint256);
 }
 
 contract AnyswapV6Router_MixPool is MPCManageable {
     using SafeERC20 for IERC20;
-    using Address for address;
 
-    address public immutable wNATIVE;
     address public immutable mixpool;
 
-    constructor(address _wNATIVE, address _mixpool, address _mpc) MPCManageable(_mpc) {
+    bool public disableCheckCompletion;
+    mapping(string => bool) public completedSwapin;
+    modifier checkCompletion(string memory swapID) {
+        require(!completedSwapin[swapID] || disableCheckCompletion, "swap is completed");
+        _;
+    }
+
+    event LogAnySwapInMixPool(
+        string swapID,
+        address indexed token,
+        address indexed to,
+        uint256 amount,
+        uint256 fromChainID,
+        uint256 toChainID);
+
+    event LogAnySwapOutMixPool(
+        address indexed token,
+        address indexed from,
+        string to,
+        uint256 amount,
+        uint256 fromChainID,
+        uint256 toChainID);
+
+    constructor(address _mixpool, address _mpc) MPCManageable(_mpc) {
         require(_mixpool != address(0), "mixpool is the zero address");
-        wNATIVE = _wNATIVE;
         mixpool = _mixpool;
     }
 
-    // only accept Native via fallback from the wNative contract
-    receive() external payable {
-        assert(msg.sender == wNATIVE);
+    function setCheckCompletion(bool enable) external onlyMPC {
+        disableCheckCompletion = !enable;
     }
 
-    event LogAnySwapIn(bytes32 indexed txhash, address indexed token, address indexed to, uint256 amount, uint256 fromChainID, uint256 toChainID, address pool);
-    event LogAnySwapOut(address indexed token, address indexed from, string to, uint256 amount, uint256 fromChainID, uint256 toChainID, address pool);
-
-    function anySwapOut(address token, string memory to, uint256 amount, uint256 toChainID) external payable {
+    function anySwapOut(
+        address token,
+        string memory to,
+        uint256 amount,
+        uint256 toChainID
+    ) external {
         address pool = mixpool;
-        (address _underlying, bool _isMint) = IAnyswapMixPool(pool).underlyingInfo(token);
-        if (_underlying == address(0) || _isMint) {
-            require(msg.value == 0);
-            IAnyswapMixPool(pool).burn(token, msg.sender, amount);
-        } else if (_underlying == wNATIVE) {
-            IwNATIVE(wNATIVE).deposit{value: msg.value}();
-            assert(IwNATIVE(wNATIVE).transfer(pool, msg.value));
+        (, bool canMint) = IAnyswapMixPool(pool).tokenInfo(token);
+        if (!canMint && IAnyswapMixPool(pool).balanceOf(token, msg.sender) < amount) {
+            IERC20(token).safeTransferFrom(msg.sender, token, amount);
         } else {
-            require(msg.value == 0);
-            IERC20(_underlying).safeTransferFrom(msg.sender, token, amount);
+            IAnyswapMixPool(pool).burn(token, msg.sender, amount);
         }
-        emit LogAnySwapOut(token, msg.sender, to, amount, block.chainid, toChainID, pool);
+        emit LogAnySwapOutMixPool(token, msg.sender, to, amount, block.chainid, toChainID);
     }
 
-    function anySwapIn(bytes32 txs, address pool, address token, address to, uint256 amount, uint256 fromChainID) external onlyMPC {
-        require(pool == mixpool, "mixpool not match");
-        (address _underlying, bool _isMint) = IAnyswapMixPool(pool).underlyingInfo(token);
-        if (_underlying != address(0) && !_isMint && IERC20(_underlying).balanceOf(token) >= amount) {
-            IAnyswapMixPool(pool).mint(token, address(this), amount);
-            if (_underlying == wNATIVE) {
-                IAnyswapMixPool(pool).withdraw(token, amount, address(this));
-                IwNATIVE(wNATIVE).withdraw(amount);
-                Address.sendValue(payable(to), amount);
-            } else {
-                IAnyswapMixPool(pool).withdraw(token, amount, to);
-            }
+    function anySwapIn(
+        string memory swapID,
+        address token,
+        address to,
+        uint256 amount,
+        uint256 fromChainID
+    ) external checkCompletion(swapID) onlyMPC {
+        completedSwapin[swapID] = true;
+        address pool = mixpool;
+        (, bool canMint) = IAnyswapMixPool(pool).tokenInfo(token);
+        if (!canMint && IERC20(token).balanceOf(pool) >= amount) {
+            IAnyswapMixPool(pool).withdrawVault(token, amount, to);
         } else {
             IAnyswapMixPool(pool).mint(token, to, amount);
         }
-        emit LogAnySwapIn(txs, token, to, amount, fromChainID, block.chainid, pool);
+        emit LogAnySwapInMixPool(swapID, token, to, amount, fromChainID, block.chainid);
     }
 
     function anySwapFeeTo(address token, uint256 amount) external onlyMPC {
-        IAnyswapMixPool(mixpool).mint(token, address(this), amount);
-        IAnyswapMixPool(mixpool).withdraw(token, amount, msg.sender);
-    }
-
-    function depositNative(address token, address to) external payable returns (uint256) {
-        require(wNATIVE != address(0), "zero wNATIVE");
-        (address _underlying, bool _isMint) = IAnyswapMixPool(mixpool).underlyingInfo(token);
-        require(_underlying == wNATIVE && !_isMint, "underlying is not wNATIVE");
-
-        IwNATIVE(wNATIVE).deposit{value: msg.value}();
-        assert(IwNATIVE(wNATIVE).transfer(mixpool, msg.value));
-        IAnyswapMixPool(mixpool).deposit(token, msg.value, to);
-        return msg.value;
-    }
-
-    function withdrawNative(address token, uint256 amount, address to) external returns (uint256) {
-        require(wNATIVE != address(0), "zero wNATIVE");
-        (address _underlying, bool _isMint) = IAnyswapMixPool(mixpool).underlyingInfo(token);
-        require(_underlying == wNATIVE && !_isMint, "underlying is not wNATIVE");
-
-        uint256 old_balance = IERC20(wNATIVE).balanceOf(address(this));
-        IAnyswapMixPool(mixpool).withdraw(token, amount, address(this));
-        uint256 new_balance = IERC20(wNATIVE).balanceOf(address(this));
-        assert(new_balance == old_balance + amount);
-
-        IwNATIVE(wNATIVE).withdraw(amount);
-        Address.sendValue(payable(to), amount);
-        return amount;
+        IAnyswapMixPool(mixpool).withdrawVault(token, amount, msg.sender);
     }
 }

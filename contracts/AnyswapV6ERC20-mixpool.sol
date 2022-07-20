@@ -417,43 +417,60 @@ library SafeERC20 {
 pragma solidity ^0.8.10;
 
 interface IAnyswapMixPool {
+    function tokenInfo(address token) external view returns (bool authed, bool canMint);
     function mint(address token, address to, uint256 amount) external returns (bool);
     function burn(address token, address from, uint256 amount) external returns (bool);
-    function underlyingInfo(address token) external view returns (address, bool);
     function deposit(address token, uint256 amount, address to) external returns (uint256);
     function withdraw(address token, uint256 amount, address to) external returns (uint256);
+    function withdrawVault(address token, uint amount, address to) external returns (uint256);
+    function balanceOf(address token, address account) external view returns (uint256);
 }
 
-interface IComintToken {
-    function mint(address to, uint256 amount) external;
-    function burnFrom(address account, uint256 amount) external;
+library TokenOperation {
+    using Address for address;
+
+    function safeMint(
+        address token,
+        address to,
+        uint256 value
+    ) internal {
+        // mint(address,uint256)
+        _callOptionalReturn(token, abi.encodeWithSelector(0x40c10f19, to, value));
+    }
+
+    function safeBurnFrom(
+        address token,
+        address from,
+        uint256 value
+    ) internal {
+        // burnFrom(address,uint256)
+        _callOptionalReturn(token, abi.encodeWithSelector(0x79cc6790, from, value));
+    }
+
+    function _callOptionalReturn(address token, bytes memory data) private {
+        bytes memory returndata = token.functionCall(data, "TokenOperation: low-level call failed");
+        if (returndata.length > 0) {
+            // Return data is optional
+            require(abi.decode(returndata, (bool)), "TokenOperation: did not succeed");
+        }
+    }
 }
 
 contract AnyswapV6ERC20_MixPool is IAnyswapMixPool {
     using SafeERC20 for IERC20;
 
     struct TokenInfo {
-        string name;
-        string symbol;
-        uint8  decimals;
-    }
-
-    struct TokenUnderlyingInfo {
-        address underlying;
-        bool underlyingIsMinted;
+        bool authed;
+        bool canMint;
     }
 
     mapping(address => TokenInfo) public tokenInfo;
-    mapping(address => TokenUnderlyingInfo) public _tokenUnderlyingInfo;
 
     mapping(address => mapping(address => uint256)) public balanceOf;
     mapping(address => uint256) public totalSupply;
 
     // init flag for setting immediate vault, needed for CREATE2 support
     bool private _init;
-
-    // flag to enable/disable swapout vs vault.burn so multiple events are triggered
-    bool private _vaultOnly;
 
     // delay for timelock functions
     uint public constant DELAY = 2 days;
@@ -478,30 +495,20 @@ contract AnyswapV6ERC20_MixPool is IAnyswapMixPool {
         _;
     }
 
+    modifier onlyAuthToken(address token) {
+        require(tokenInfo[token].authed, "MixPool: unauth token");
+        _;
+    }
+
     event LogChangeVault(address indexed oldVault, address indexed newVault, uint indexed effectiveTime);
-    event LogSwapin(bytes32 indexed txhash, address indexed token, address indexed account, uint amount);
+    event LogSwapin(string swapID, address indexed token, address indexed account, uint amount);
     event LogSwapout(address indexed token, address indexed account, address indexed bindaddr, uint amount);
     event Transfer(address indexed token, address indexed from, address indexed to, uint256 value);
+    event Deposit(address indexed token, address indexed from, address indexed to, uint256 amount);
+    event Withdraw(address indexed token, address indexed from, address indexed to, uint256 amount);
 
     constructor(address _vault) {
         vault = _vault;
-    }
-
-    function owner() external view returns (address) {
-        return vault;
-    }
-
-    function mpc() external view returns (address) {
-        return vault;
-    }
-
-    function underlyingInfo(address token) external view returns (address, bool) {
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        return (info.underlying, info.underlyingIsMinted);
-    }
-
-    function setVaultOnly(bool enabled) external onlyVault {
-        _vaultOnly = enabled;
     }
 
     function getAllMinters() external view returns (address[] memory) {
@@ -550,71 +557,74 @@ contract AnyswapV6ERC20_MixPool is IAnyswapMixPool {
         return true;
     }
 
-    function mint(address token, address to, uint256 amount) external onlyAuth returns (bool) {
+    function addAuthToken(address token, bool canMint) external onlyVault {
+        tokenInfo[token] = TokenInfo(true, canMint);
+    }
+
+    function removeAuthToken(address token) external onlyVault {
+        tokenInfo[token].authed = false;
+    }
+
+    function addAuthTokens(address[] memory tokens, bool[] memory flags) external onlyVault {
+        uint256 length = tokens.length;
+        require(length == flags.length, "length mismatch");
+        for (uint256 i = 0; i < length; i++) {
+            tokenInfo[tokens[i]] = TokenInfo(true, flags[i]);
+        }
+    }
+
+    function removeAuthTokens(address[] memory tokens) external onlyVault {
+        for (uint256 i = 0; i < tokens.length; i++) {
+            tokenInfo[tokens[i]].authed = false;
+        }
+    }
+
+    function mint(
+        address token,
+        address to,
+        uint256 amount
+    ) external onlyAuth returns (bool) {
         _mint(token, to, amount);
         return true;
     }
 
-    function burn(address token, address from, uint256 amount) external onlyAuth returns (bool) {
+    function burn(
+        address token,
+        address from,
+        uint256 amount
+    ) external onlyAuth returns (bool) {
         _burn(token, from, amount);
         return true;
     }
 
-    function Swapin(bytes32 txhash, address token, address account, uint256 amount) external onlyAuth returns (bool) {
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        address _underlying = info.underlying;
-        if (_underlying != address(0)
-            && !info.underlyingIsMinted
-            && IERC20(_underlying).balanceOf(address(this)) >= amount) {
-            IERC20(_underlying).safeTransfer(account, amount);
-        } else {
-            _mint(token, account, amount);
-        }
-        emit LogSwapin(txhash, token, account, amount);
-        return true;
-    }
-
-    function Swapout(address token, uint256 amount, address bindaddr) external returns (bool) {
-        require(!_vaultOnly, "MixPool: vaultOnly");
-        require(bindaddr != address(0), "MixPool: address(0)");
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        address _underlying = info.underlying;
-        if (_underlying != address(0)
-            && !info.underlyingIsMinted
-            && balanceOf[token][msg.sender] < amount) {
-            IERC20(_underlying).safeTransferFrom(msg.sender, address(this), amount);
-        } else {
-            _burn(token, msg.sender, amount);
-        }
-        emit LogSwapout(token, msg.sender, bindaddr, amount);
-        return true;
-    }
-
     function deposit(address token, uint amount, address to) external returns (uint) {
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        address _underlying = info.underlying;
-        require(_underlying != address(0) && _underlying != address(this) && !info.underlyingIsMinted);
-        IERC20(_underlying).safeTransferFrom(msg.sender, address(this), amount);
+        require(!tokenInfo[token].canMint);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         _mint(token, to, amount);
+        emit Deposit(token, msg.sender, to, amount);
         return amount;
     }
 
     function withdraw(address token, uint amount, address to) external returns (uint) {
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        address _underlying = info.underlying;
-        require(_underlying != address(0) && _underlying != address(this) && !info.underlyingIsMinted);
+        require(!tokenInfo[token].canMint);
         _burn(token, msg.sender, amount);
-        IERC20(_underlying).safeTransfer(to, amount);
+        IERC20(token).safeTransfer(to, amount);
+        emit Withdraw(token, msg.sender, to, amount);
         return amount;
     }
 
-    function _mint(address token, address account, uint256 amount) internal {
+    function withdrawVault(address token, uint amount, address to) external onlyAuth returns (uint) {
+        require(!tokenInfo[token].canMint);
+        IERC20(token).safeTransfer(to, amount);
+        emit Withdraw(token, address(this), to, amount);
+        return amount;
+    }
+
+    function _mint(address token, address account, uint256 amount) internal onlyAuthToken(token) {
         require(token != address(0) && account != address(0), "MixPool: address(0)");
 
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        address _underlying = info.underlying;
-        if (_underlying != address(0) && info.underlyingIsMinted) {
-            IComintToken(_underlying).mint(account, amount);
+        if (tokenInfo[token].canMint) {
+            TokenOperation.safeMint(token, account, amount);
         } else {
             balanceOf[token][account] += amount;
             emit Transfer(token, address(0), account, amount);
@@ -623,16 +633,14 @@ contract AnyswapV6ERC20_MixPool is IAnyswapMixPool {
         totalSupply[token] += amount;
     }
 
-    function _burn(address token, address account, uint256 amount) internal {
+    function _burn(address token, address account, uint256 amount) internal onlyAuthToken(token) {
         require(token != address(0) && account != address(0), "MixPool: address(0)");
 
-        TokenUnderlyingInfo memory info = _tokenUnderlyingInfo[token];
-        address _underlying = info.underlying;
-        if (_underlying != address(0) && info.underlyingIsMinted) {
-            IComintToken(_underlying).burnFrom(account, amount);
+        uint256 balance = balanceOf[token][account];
+
+        if (balance < amount && tokenInfo[token].canMint) {
+            TokenOperation.safeBurnFrom(token, account, amount);
         } else {
-            uint256 balance = balanceOf[token][account];
-            require(balance >= amount, "ERC20: burn amount exceeds balance");
             balanceOf[token][account] = balance - amount;
             emit Transfer(token, account, address(0), amount);
         }
