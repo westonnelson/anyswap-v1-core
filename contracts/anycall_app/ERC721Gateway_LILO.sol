@@ -171,8 +171,6 @@ library Address {
 
 interface IERC721 {
     function ownerOf(uint256 tokenId) external view returns (address owner);
-    function mint(address account, uint256 tokenId) external;
-    function burn(uint256 tokenId) external;
     function safeTransferFrom(address from, address to, uint256 tokenId) external;
 }
 
@@ -180,7 +178,7 @@ interface IGatewayClient {
     function notifySwapoutFallback(bool refundSuccess, uint256 tokenId, uint256 swapoutSeq) external returns (bool);
 }
 
-contract ERC721Gateway_MintBurn is ERC721Gateway {
+contract ERC721Gateway_LILO is ERC721Gateway {
     using Address for address;
 
     constructor (address anyCallProxy, uint256 flag, address token) ERC721Gateway(anyCallProxy, flag, token) {}
