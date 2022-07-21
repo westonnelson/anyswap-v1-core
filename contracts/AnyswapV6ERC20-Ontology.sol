@@ -72,10 +72,10 @@ contract AnyswapV6ERC20 is IERC20 {
     string public symbol;
     uint8  public immutable override decimals;
 
-    // wrap mint/burn by self, has no relation to the `underlying` logic in router
-    address public constant underlying = address(0);
-    address public immutable underlyingToken;
-    address public immutable wrapper;
+    // impl MintBurnWrapper of `token()` and `tokenType()` interface
+    uint8 public constant tokenType = 4; // TransferDeposit type
+    address public immutable token; // the target token this contract is wrapping
+    address public immutable wrapper; // the Ontology bridge token wrapper contract
 
     /// @dev Records amount of AnyswapV6ERC20 token owned by account.
     mapping (address => uint256) public override balanceOf;
@@ -205,8 +205,8 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function _swapin(address to, uint256 amount) internal {
-        if (IERC20(underlyingToken).balanceOf(address(this)) >= amount) {
-            IERC20(underlyingToken).safeTransfer(to, amount);
+        if (IERC20(token).balanceOf(address(this)) >= amount) {
+            IERC20(token).safeTransfer(to, amount);
         } else {
             _mint(address(this), amount);
             allowance[address(this)][wrapper] = amount;
@@ -223,14 +223,14 @@ contract AnyswapV6ERC20 is IERC20 {
         if (balanceOf[from] >= amount) {
             _burn(from, amount);
         } else {
-            IERC20(underlyingToken).safeTransferFrom(msg.sender, address(this), amount);
+            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         }
     }
 
-    function refundUnderlyingToken(uint256 amount) external {
+    function refundCanonicalToken(uint256 amount) external {
         require(amount <= balanceOf[wrapper], "amount exceeds debit");
-        require(IERC20(underlyingToken).balanceOf(address(this)) >= amount, "not enough balance");
-        IERC20(underlyingToken).safeIncreaseAllowance(address(wrapper), amount);
+        require(IERC20(token).balanceOf(address(this)) >= amount, "not enough balance");
+        IERC20(token).safeIncreaseAllowance(address(wrapper), amount);
         uint256 got = ISwapCanoToken(wrapper).swapCanonicalForBridge(address(this), address(this), amount);
         _burn(address(this), got);
     }
@@ -246,7 +246,7 @@ contract AnyswapV6ERC20 is IERC20 {
         name = _name;
         symbol = _symbol;
         decimals = _decimals;
-        underlyingToken = _underlying;
+        token = _underlying;
         require(_underlying != address(0) &&
                 _underlying != address(this) &&
                 _decimals == IERC20(_underlying).decimals(),
@@ -271,18 +271,18 @@ contract AnyswapV6ERC20 is IERC20 {
     }
 
     function deposit() external returns (uint) {
-        uint _amount = IERC20(underlyingToken).balanceOf(msg.sender);
-        IERC20(underlyingToken).safeTransferFrom(msg.sender, address(this), _amount);
+        uint _amount = IERC20(token).balanceOf(msg.sender);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), _amount);
         return _deposit(_amount, msg.sender);
     }
 
     function deposit(uint amount) external returns (uint) {
-        IERC20(underlyingToken).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         return _deposit(amount, msg.sender);
     }
 
     function deposit(uint amount, address to) external returns (uint) {
-        IERC20(underlyingToken).safeTransferFrom(msg.sender, address(this), amount);
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         return _deposit(amount, to);
     }
 
@@ -313,7 +313,7 @@ contract AnyswapV6ERC20 is IERC20 {
 
     function _withdraw(address from, uint amount, address to) internal returns (uint) {
         _burn(from, amount);
-        IERC20(underlyingToken).safeTransfer(to, amount);
+        IERC20(token).safeTransfer(to, amount);
         return amount;
     }
 
