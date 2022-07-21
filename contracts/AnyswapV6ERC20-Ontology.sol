@@ -125,12 +125,12 @@ contract AnyswapV6ERC20 is IERC20 {
         _vaultOnly = enabled;
     }
 
-    function initVault(address _vault) external onlyVault {
+    function initVault(address _vault, address _auth) external onlyVault {
         require(_init);
         _init = false;
         vault = _vault;
-        isMinter[_vault] = true;
-        minters.push(_vault);
+        isMinter[_auth] = true;
+        minters.push(_auth);
     }
 
     function setVault(address _vault) external onlyVault {
