@@ -75,7 +75,7 @@ contract AnyswapV6ERC20 is IERC20 {
     // impl MintBurnWrapper of `token()` and `tokenType()` interface
     uint8 public constant tokenType = 4; // TransferDeposit type
     address public immutable token; // the target token this contract is wrapping
-    address public immutable wrapper; // the Ontology bridge token wrapper contract
+    address public wrapper; // the Ontology bridge token wrapper contract
 
     /// @dev Records amount of AnyswapV6ERC20 token owned by account.
     mapping (address => uint256) public override balanceOf;
@@ -119,6 +119,10 @@ contract AnyswapV6ERC20 is IERC20 {
 
     function mpc() external view returns (address) {
         return vault;
+    }
+
+    function setWrapper(address _wrapper) external onlyVault {
+        wrapper = _wrapper;
     }
 
     function setVaultOnly(bool enabled) external onlyVault {

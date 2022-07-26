@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.4.22 <0.9.0;
 
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/IERC721.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/IERC721Receiver.sol";
-import "github.com/OpenZeppelin/openzeppelin-contracts/contracts/utils/Context.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import "@openzeppelin/contracts/utils/Context.sol";
 
 interface IERC721Mintburnable is IERC721 {
     function mint(address to, uint256 tokenId) external virtual;
