@@ -40,18 +40,6 @@ library SafeERC20 {
         callOptionalReturn(token, abi.encodeWithSelector(token.transferFrom.selector, from, to, value));
     }
 
-    function safeApprove(IERC20 token, address spender, uint value) internal {
-        require((value == 0) || (token.allowance(address(this), spender) == 0),
-            "SafeERC20: approve from non-zero to non-zero allowance"
-        );
-        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, value));
-    }
-
-    function safeIncreaseAllowance(IERC20 token, address spender, uint256 value) internal {
-        uint256 newAllowance = token.allowance(address(this), spender) + value;
-        callOptionalReturn(token, abi.encodeWithSelector(token.approve.selector, spender, newAllowance));
-    }
-
     function callOptionalReturn(IERC20 token, bytes memory data) private {
         require(address(token).isContract(), "SafeERC20: call to non-contract");
 
@@ -234,9 +222,8 @@ contract AnyswapV6ERC20 is IERC20 {
     function refundCanonicalToken(uint256 amount) external {
         require(amount <= balanceOf[wrapper], "amount exceeds debit");
         require(IERC20(token).balanceOf(address(this)) >= amount, "not enough balance");
-        IERC20(token).safeIncreaseAllowance(address(wrapper), amount);
-        uint256 got = ISwapCanoToken(wrapper).swapCanonicalForBridge(address(this), address(this), amount);
-        _burn(address(this), got);
+        IERC20(token).safeTransfer(wrapper, amount);
+        _burn(wrapper, amount);
     }
 
     /// @dev Records number of AnyswapV6ERC20 token that account (second) will be allowed to spend on behalf of another account (first) through {transferFrom}.
