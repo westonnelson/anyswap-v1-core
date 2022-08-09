@@ -215,7 +215,7 @@ contract AnyswapV6ERC20 is IERC20 {
         if (balanceOf[from] >= amount) {
             _burn(from, amount);
         } else {
-            IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+            IERC20(token).safeTransferFrom(from, address(this), amount);
         }
     }
 
