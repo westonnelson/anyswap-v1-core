@@ -10,12 +10,25 @@ interface ITransfer {
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
 
-contract ERC20Gateway_LP is ERC20Gateway {
+contract ERC20Gateway_LP_Permissionless is ERC20Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address token) ERC20Gateway(anyCallProxy, 2, token) {}
+    constructor (address anyCallProxy, address token) ERC20Gateway(anyCallProxy, 0, token) {}
+
+    mapping(uint256 => uint256) public priceTable; // chainID -> price (wei)
+
+    function setPrice(uint256 chainID, uint256 price) external onlyAdmin {
+        priceTable[chainID] = price;
+    }
+
+    function withdrawFee(address to, uint256 amount) external onlyAdmin {
+        require(to.code.length == 0);
+        (bool success,) = to.call{value: amount}("");
+        require(success);
+    }
 
     function _swapout(uint256 amount, address sender) internal override returns (bool) {
+        require(msg.value >= priceTable[chainID]);
         return ITransfer(token).transferFrom(sender, address(this), amount);
     }
 

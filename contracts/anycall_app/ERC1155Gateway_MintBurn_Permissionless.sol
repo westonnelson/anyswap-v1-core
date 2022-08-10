@@ -8,12 +8,25 @@ import "../Address.sol";
 import "../interfaces/IGatewayClient1155.sol";
 import "../interfaces/IMintBurn1155.sol";
 
-contract ERC1155Gateway_MintBurn is ERC1155Gateway {
+contract ERC1155Gateway_MintBurn_Permissionless is ERC1155Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address token) ERC1155Gateway(anyCallProxy, 2, token) {}
+    constructor (address anyCallProxy, address token) ERC1155Gateway(anyCallProxy, 0, token) {}
+
+    mapping(uint256 => uint256) public priceTable; // chainID -> price (wei)
+
+    function setPrice(uint256 chainID, uint256 price) external onlyAdmin {
+        priceTable[chainID] = price;
+    }
+
+    function withdrawFee(address to, uint256 amount) external onlyAdmin {
+        require(to.code.length == 0);
+        (bool success,) = to.call{value: amount}("");
+        require(success);
+    }
 
     function _swapout(address sender, uint256 tokenId, uint256 amount) internal override virtual returns (bool, bytes memory) {
+        require(msg.value >= priceTable[chainID]);
         try IMintBurn1155(token).burn(sender, tokenId, amount) {
             return (true, "");
         } catch {

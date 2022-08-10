@@ -11,7 +11,7 @@ import "../interfaces/IMintBurn721.sol";
 contract ERC721Gateway_MintBurn is ERC721Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, uint256 flag, address token) ERC721Gateway(anyCallProxy, flag, token) {}
+    constructor (address anyCallProxy, address token) ERC721Gateway(anyCallProxy, 2, token) {}
 
     function _swapout(uint256 tokenId) internal override virtual returns (bool, bytes memory) {
         require(IMintBurn721(token).ownerOf(tokenId) == msg.sender, "not allowed");
