@@ -13,7 +13,7 @@ interface ITransfer {
 contract ERC20Gateway_LP is ERC20Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address token) ERC20Gateway(anyCallProxy, 2, token) {}
+    constructor (address anyCallProxy, uint256 flag, address token) ERC20Gateway(anyCallProxy, flag, token) {}
 
     function _swapout(uint256 amount, address sender) internal override returns (bool) {
         return ITransfer(token).transferFrom(sender, address(this), amount);

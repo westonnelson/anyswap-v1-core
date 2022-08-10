@@ -11,7 +11,7 @@ import "../interfaces/IMintBurn1155.sol";
 contract ERC1155Gateway_MintBurn is ERC1155Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address token) ERC1155Gateway(anyCallProxy, 2, token) {}
+    constructor (address anyCallProxy, uint256 flag, address token) ERC1155Gateway(anyCallProxy, flag, token) {}
 
     function _swapout(address sender, uint256 tokenId, uint256 amount) internal override virtual returns (bool, bytes memory) {
         try IMintBurn1155(token).burn(sender, tokenId, amount) {

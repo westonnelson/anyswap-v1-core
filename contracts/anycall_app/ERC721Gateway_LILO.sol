@@ -11,7 +11,7 @@ import "../interfaces/IERC721.sol";
 contract ERC721Gateway_LILO is ERC721Gateway {
     using Address for address;
 
-    constructor (address anyCallProxy, address token) ERC721Gateway(anyCallProxy, 2, token) {}
+    constructor (address anyCallProxy, uint256 flag, address token) ERC721Gateway(anyCallProxy, flag, token) {}
 
     function _swapout(uint256 tokenId) internal override virtual returns (bool, bytes memory) {
         try IERC721(token).safeTransferFrom(msg.sender, address(this), tokenId) {

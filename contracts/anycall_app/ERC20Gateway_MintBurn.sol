@@ -13,8 +13,9 @@ contract ERC20Gateway_MintBurn is ERC20Gateway {
 
     constructor(
         address anyCallProxy,
+        uint256 flag,
         address token
-    ) ERC20Gateway(anyCallProxy, 2, token) {}
+    ) ERC20Gateway(anyCallProxy, flag, token) {}
 
     function _swapout(uint256 amount, address sender)
         internal
