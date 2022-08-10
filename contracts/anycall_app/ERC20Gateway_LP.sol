@@ -3,12 +3,9 @@
 pragma solidity ^0.8.1;
 
 import "../ERC20Gateway.sol";
-import "../Address.sol";
-import "../interfaces/IGatewayClient.sol";
 import "../interfaces/ITransfer.sol";
 
 contract ERC20Gateway_LP is ERC20Gateway {
-    using Address for address;
 
     constructor (address anyCallProxy, uint256 flag, address token) ERC20Gateway(anyCallProxy, flag, token) {}
 
@@ -20,12 +17,4 @@ contract ERC20Gateway_LP is ERC20Gateway {
         return ITransfer(token).transferFrom(address(this), receiver, amount);
     }
 
-    function _swapoutFallback(uint256 amount, address sender, uint256 swapoutSeq) internal override returns (bool) {
-        bool result = ITransfer(token).transferFrom(address(this), sender, amount);
-        if (sender.isContract()) {
-            bytes memory _data = abi.encodeWithSelector(IGatewayClient.notifySwapoutFallback.selector, result, amount, swapoutSeq);
-            sender.call(_data);
-        }
-        return result;
-    }
 }

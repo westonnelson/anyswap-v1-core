@@ -15,19 +15,8 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
 
     function _swapout(uint256 tokenId) internal virtual returns (bool, bytes memory);
     function _swapin(uint256 tokenId, address receiver, bytes memory extraMsg) internal virtual returns (bool);
-    function _swapoutFallback(uint256 tokenId, address sender, uint256 swapoutSeq, bytes memory extraMsg) internal virtual returns (bool);
 
     event LogAnySwapOut(uint256 tokenId, address sender, address receiver, uint256 toChainID, uint256 swapoutSeq);
-
-    function Swapout(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
-        (bool ok, bytes memory extraMsg) = _swapout(tokenId);
-        require(ok);
-        swapoutSeq++;
-        bytes memory data = abi.encode(tokenId, msg.sender, receiver, swapoutSeq, extraMsg);
-        _anyCall(peer[destChainID], data, address(this), destChainID);
-        emit LogAnySwapOut(tokenId, msg.sender, receiver, destChainID, swapoutSeq);
-        return swapoutSeq;
-    }
 
     function Swapout_no_fallback(uint256 tokenId, address receiver, uint256 destChainID) external payable returns (uint256) {
         (bool ok, bytes memory extraMsg) = _swapout(tokenId);
@@ -47,11 +36,4 @@ abstract contract ERC721Gateway is IERC721Gateway, AnyCallApp {
         require(_swapin(tokenId, receiver, extraMsg));
     }
 
-    function _anyFallback(bytes calldata data) internal override {
-        (uint256 tokenId, address sender, , uint256 swapoutSeq, bytes memory extraMsg) = abi.decode(
-            data,
-            (uint256, address, address, uint256, bytes)
-        );
-        require(_swapoutFallback(tokenId, sender, swapoutSeq, extraMsg));
-    }
 }

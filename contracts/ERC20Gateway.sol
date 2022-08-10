@@ -17,7 +17,6 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
 
     function _swapout(uint256 amount, address sender) internal virtual returns (bool);
     function _swapin(uint256 amount, address receiver) internal virtual returns (bool);
-    function _swapoutFallback(uint256 amount, address sender, uint256 swapoutSeq) internal virtual returns (bool);
 
     event LogAnySwapOut(uint256 amount, address sender, address receiver, uint256 toChainID, uint256 swapoutSeq);
 
@@ -46,15 +45,6 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
         return amount;
     }
 
-    function Swapout(uint256 amount, address receiver, uint256 destChainID) external payable returns (uint256) {
-        require(_swapout(amount, msg.sender));
-        swapoutSeq++;
-        bytes memory data = abi.encode(amount, msg.sender, receiver, swapoutSeq);
-        _anyCall(peer[destChainID], data, address(this), destChainID);
-        emit LogAnySwapOut(amount, msg.sender, receiver, destChainID, swapoutSeq);
-        return swapoutSeq;
-    }
-
     function Swapout_no_fallback(uint256 amount, address receiver, uint256 destChainID) external payable returns (uint256) {
         require(_swapout(amount, msg.sender));
         swapoutSeq++;
@@ -73,11 +63,4 @@ abstract contract ERC20Gateway is IERC20Gateway, AnyCallApp {
         require(_swapin(amount, receiver));
     }
 
-    function _anyFallback(bytes calldata data) internal override {
-        (uint256 amount, address sender, , uint256 swapoutSeq) = abi.decode(
-            data,
-            (uint256, address, address, uint256)
-        );
-        require(_swapoutFallback(amount, sender, swapoutSeq));
-    }
 }
