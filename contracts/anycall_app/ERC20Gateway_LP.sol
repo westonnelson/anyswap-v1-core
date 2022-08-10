@@ -2,13 +2,10 @@
 
 pragma solidity ^0.8.1;
 
-import "../AnyCallApp.sol";
 import "../ERC20Gateway.sol";
 import "../Address.sol";
 import "../interfaces/IGatewayClient.sol";
-interface ITransfer {
-    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
-}
+import "../interfaces/ITransfer.sol";
 
 contract ERC20Gateway_LP is ERC20Gateway {
     using Address for address;
