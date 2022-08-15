@@ -12,12 +12,18 @@ interface ITokenMintBurn {
     function burnFrom(address from, uint256 amount) external returns (bool);
 }
 
-// IRouterMintBurn is required for Multichain Router
+// IRouterMintBurn interface required for Multichain Router Dapp
+// `mint` and `burn` is required by the router contract
+// `token` and `tokenType` is required by the front-end
 // Notice: the parameters and return type should be same
 interface IRouterMintBurn {
     function mint(address to, uint256 amount) external returns (bool);
 
     function burn(address from, uint256 amount) external returns (bool);
+
+    function token() external view returns (address);
+
+    function tokenType() external view returns (TokenType);
 }
 
 // RoleControl has a `vault` (the primary controller)
@@ -92,8 +98,8 @@ enum TokenType {
 // RouterMintBurnWrapper is a wrapper for token that supports `ITokenMintBurn` to support `IRouterMintBurn`
 contract RouterMintBurnWrapper is IRouterMintBurn, RoleControl {
     // the target token to be wrapped, must support `ITokenMintBurn`
-    address public immutable token;
-    TokenType public constant tokenType = TokenType.MintBurnFrom;
+    address public immutable override token;
+    TokenType public constant override tokenType = TokenType.MintBurnFrom;
 
     constructor(address _token, address _vault) RoleControl(_vault) {
         require(
@@ -103,13 +109,19 @@ contract RouterMintBurnWrapper is IRouterMintBurn, RoleControl {
         token = _token;
     }
 
-    function mint(address to, uint256 amount) external onlyAuth returns (bool) {
+    function mint(address to, uint256 amount)
+        external
+        override
+        onlyAuth
+        returns (bool)
+    {
         assert(ITokenMintBurn(token).mint(to, amount));
         return true;
     }
 
     function burn(address from, uint256 amount)
         external
+        override
         onlyAuth
         returns (bool)
     {
